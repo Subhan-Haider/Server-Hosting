@@ -43,6 +43,9 @@ function updateCloudflareConfig(domain, port) {
             };
 
             if (configObj && configObj.ingress) {
+                // Remove existing rule for this domain to prevent duplicates
+                configObj.ingress = configObj.ingress.filter(rule => rule.hostname !== domain);
+
                 // Insert before the catch-all rule if it exists
                 const catchAllIndex = configObj.ingress.findIndex(rule => rule.service && rule.service.includes('http_status:404'));
                 if (catchAllIndex !== -1) {

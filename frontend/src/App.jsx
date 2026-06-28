@@ -147,7 +147,15 @@ function App() {
                   type="text" 
                   placeholder={deployType === 'github' ? 'Auto-generated from URL' : 'e.g. my-awesome-app'} 
                   value={formData.name} 
-                  onChange={e => setFormData({...formData, name: e.target.value})} 
+                  onChange={e => {
+                    const newName = e.target.value;
+                    const cleanName = newName.toLowerCase().replace(/[^a-z0-9-]/g, '');
+                    setFormData({
+                      ...formData, 
+                      name: newName,
+                      domain: cleanName ? `${cleanName}.subhan.tech` : ''
+                    });
+                  }} 
                   style={{ paddingLeft: '40px' }}
                   required={deployType === 'local'}
                 />
