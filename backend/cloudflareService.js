@@ -65,7 +65,7 @@ function updateCloudflareConfig(domain, port) {
             console.log(`Updated cloudflared config for ${domain} -> port ${port}`);
 
             // Restart cloudflared via PM2
-            exec('pm2 restart cloudflared', (error, stdout, stderr) => {
+            exec('pm2 restart tunnel', (error, stdout, stderr) => {
                 if (error) {
                     console.error('Failed to restart cloudflared via PM2:', error);
                     // Don't reject the whole promise just because PM2 failed, but log it
@@ -96,7 +96,7 @@ function removeCloudflareConfig(domain) {
                 configObj.ingress = configObj.ingress.filter(rule => rule.hostname !== domain);
                 fs.writeFileSync(CONFIG_PATH, yaml.stringify(configObj));
                 
-                exec('pm2 restart cloudflared', (error, stdout, stderr) => {
+                exec('pm2 restart tunnel', (error, stdout, stderr) => {
                     resolve();
                 });
             } else {
