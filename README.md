@@ -59,3 +59,15 @@ This project is a self-hosted mini-Vercel dashboard for Linux VPS, enabling you 
    - Add a rule to `~/.cloudflared/config.yml` routing `app.yourdomain.com` to `localhost:3001`.
    - Restart the Cloudflare Tunnel.
 6. Your app is now live at `app.yourdomain.com`! Use the dashboard to monitor CPU/Memory, restart the app, or view logs.
+
+## Advanced: Wildcard DNS Setup (Highly Recommended)
+
+To avoid manually creating DNS records in Cloudflare for every single app you deploy, you can set up a **Wildcard DNS Record**. This enables the auto-generated domain feature in the dashboard (e.g., automatically generating `my-awesome-app.subhan.tech`).
+
+1. Log into your Cloudflare Dashboard and go to your domain's DNS settings.
+2. Add a new **CNAME** record.
+3. For the **Name**, type exactly: `*`
+4. For the **Target**, enter your Cloudflare Tunnel URL (e.g., `<your-tunnel-uuid>.cfargotunnel.com`).
+5. Ensure **Proxy status** is set to **Proxied (Orange Cloud)** and click Save.
+
+With this setup, the Cloudflare Tunnel will dynamically route *any* subdomain created by the Server Hosting platform without any manual DNS intervention required!
