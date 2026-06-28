@@ -1,10 +1,37 @@
-// Use native fetch (Node 18+) — no external dependency needed
-// This should be available on any modern Node.js installation
+// Use native fetch (Node 18+) or fallback to https module for older Node versions
+const _fetch = typeof fetch !== 'undefined' ? fetch : (() => {
+    const https = require('https');
+    return (url, opts = {}) => new Promise((resolve, reject) => {
+        const body = opts.body || null;
+        const urlObj = new URL(url);
+        const options = {
+            hostname: urlObj.hostname,
+            path: urlObj.pathname + urlObj.search,
+            method: opts.method || 'GET',
+            headers: opts.headers || {}
+        };
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                resolve({
+                    ok: res.statusCode >= 200 && res.statusCode < 300,
+                    status: res.statusCode,
+                    json: () => Promise.resolve(JSON.parse(data)),
+                    text: () => Promise.resolve(data)
+                });
+            });
+        });
+        req.on('error', reject);
+        if (body) req.write(body);
+        req.end();
+    });
+})();
 
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || 'Ov23liqbRAyRp8ZsT3fB';
 
 async function githubPost(url, body) {
-    const res = await fetch(url, {
+    const res = await _fetch(url, {
         method: 'POST',
         headers: {
             'Accept': 'application/json',

@@ -66,8 +66,8 @@ async function assignFreePort(projectName, domain, projectPath, meta = {}) {
         return portMap[projectName].port;
     }
 
-    // Find a free port between 3000 and 3999 using native net module
-    const port = await findFreePortInRange(3000, 3999);
+    // Find a free port between 6100 and 7000 (avoids frontend:3000, backend:4000, serve:5000)
+    const port = await findFreePortInRange(6100, 7000);
     
     try {
         await killPort(port); // Double check safety
