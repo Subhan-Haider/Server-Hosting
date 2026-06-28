@@ -15,16 +15,29 @@ async function startProject(projectName, projectPath, port, startCmd = 'npm star
         // Parse the start command (e.g., "npm run preview" -> script: "npm", args: "run preview")
         const parts = startCmd.split(' ');
         const script = parts[0];
-        const args = parts.slice(1).join(' ');
+        let args = parts.slice(1).join(' ');
+
+        // Vite ignores the PORT env var — it requires --port flag explicitly
+        // Detect any vite-based command (preview, dev) and inject --port <port> --host
+        const isViteCmd = /vite\s*(preview|dev|serve)?/.test(startCmd) ||
+                          /npm\s+run\s+(preview|dev|start)/.test(startCmd) ||
+                          startCmd.includes('preview') ||
+                          startCmd.includes('vite');
+        
+        const env = { PORT: port };
+        
+        if (isViteCmd) {
+            // Append --port and --host so Vite binds to the correct port and is network-accessible
+            args = args + ` -- --port ${port} --host`;
+            console.log(`[PM2] Detected Vite command, injecting --port ${port} --host`);
+        }
         
         pm2.start({
             name: projectName,
             script: script,
             args: args,
             cwd: projectPath,
-            env: {
-                PORT: port // Important: assigns the dynamic port to the process
-            },
+            env,
             max_memory_restart: '1G'
         }, (err, apps) => {
             if (err) return reject(err);
