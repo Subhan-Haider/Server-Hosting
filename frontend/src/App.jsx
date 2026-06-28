@@ -10,6 +10,7 @@ function App() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [availableBranches, setAvailableBranches] = useState([]);
   const [fetchingBranches, setFetchingBranches] = useState(false);
+  const [envVars, setEnvVars] = useState([{ key: '', value: '' }]);
   const [formData, setFormData] = useState({ 
     name: '', 
     path: '', 
@@ -43,12 +44,18 @@ function App() {
     e.preventDefault();
     setDeploying(true);
     try {
-      await api.deployApp({ ...formData, deployType });
+      // Convert envVars array to object, filtering empty keys
+      const envVarsObj = {};
+      envVars.forEach(({ key, value }) => {
+        if (key.trim()) envVarsObj[key.trim()] = value;
+      });
+      await api.deployApp({ ...formData, deployType, envVars: Object.keys(envVarsObj).length > 0 ? envVarsObj : undefined });
       setFormData({ 
         name: '', path: '', domain: '', 
         githubUrl: '', githubPat: '', branch: 'main',
         installCmd: '', buildCmd: '', startCmd: ''
       });
+      setEnvVars([{ key: '', value: '' }]);
       setShowAdvanced(false);
       fetchApps();
     } catch (err) {
@@ -300,6 +307,53 @@ function App() {
                     value={formData.startCmd} 
                     onChange={e => setFormData({...formData, startCmd: e.target.value})} 
                   />
+                </div>
+
+                {/* Environment Variables Editor */}
+                <div className="form-group" style={{ marginTop: '16px' }}>
+                  <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>🔐 Environment Variables (.env.local)</span>
+                    <button
+                      type="button"
+                      onClick={() => setEnvVars([...envVars, { key: '', value: '' }])}
+                      style={{ fontSize: '0.75rem', padding: '2px 8px', background: 'var(--accent-color)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                    >+ Add Variable</button>
+                  </label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' }}>
+                    {envVars.map((ev, i) => (
+                      <div key={i} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        <input
+                          type="text"
+                          placeholder="KEY"
+                          value={ev.key}
+                          onChange={e => {
+                            const updated = [...envVars];
+                            updated[i] = { ...updated[i], key: e.target.value };
+                            setEnvVars(updated);
+                          }}
+                          style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.8rem' }}
+                        />
+                        <span style={{ color: 'var(--text-secondary)' }}>=</span>
+                        <input
+                          type="text"
+                          placeholder="value"
+                          value={ev.value}
+                          onChange={e => {
+                            const updated = [...envVars];
+                            updated[i] = { ...updated[i], value: e.target.value };
+                            setEnvVars(updated);
+                          }}
+                          style={{ flex: 2, fontFamily: 'monospace', fontSize: '0.8rem' }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setEnvVars(envVars.filter((_, j) => j !== i))}
+                          style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.75rem' }}
+                        >✕</button>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '6px' }}>These will be written to <code>.env.local</code> in your project before startup.</p>
                 </div>
               </div>
             )}
