@@ -72,16 +72,19 @@ function updateCloudflareConfig(domain, port) {
 
             console.log(`Updated cloudflared config for ${domain} -> port ${port}`);
 
-            // Restart cloudflared via PM2
-            exec('pm2 restart tunnel', (error, stdout, stderr) => {
-                if (error) {
-                    console.error('Failed to restart cloudflared via PM2:', error);
-                    // Don't reject the whole promise just because PM2 failed, but log it
-                } else {
-                    console.log('Successfully restarted cloudflared via PM2');
-                }
-                resolve();
-            });
+            // Resolve immediately so the HTTP response can be sent to the frontend BEFORE the tunnel goes down
+            resolve();
+
+            // Restart cloudflared via PM2 after a 2-second delay
+            setTimeout(() => {
+                exec('pm2 restart tunnel', (error, stdout, stderr) => {
+                    if (error) {
+                        console.error('Failed to restart cloudflared via PM2:', error);
+                    } else {
+                        console.log('Successfully restarted cloudflared via PM2 (Delayed)');
+                    }
+                });
+            }, 2000);
 
         } catch (error) {
             console.error('Error updating cloudflare config:', error);
@@ -104,9 +107,15 @@ function removeCloudflareConfig(domain) {
                 configObj.ingress = configObj.ingress.filter(rule => rule.hostname !== domain);
                 fs.writeFileSync(CONFIG_PATH, yaml.stringify(configObj));
                 
-                exec('pm2 restart tunnel', (error, stdout, stderr) => {
-                    resolve();
-                });
+                // Resolve immediately before restarting tunnel
+                resolve();
+
+                // Restart cloudflared via PM2 after 2 seconds
+                setTimeout(() => {
+                    exec('pm2 restart tunnel', (error, stdout, stderr) => {
+                        if (error) console.error('Failed to restart cloudflared on removal:', error);
+                    });
+                }, 2000);
             } else {
                 resolve();
             }
