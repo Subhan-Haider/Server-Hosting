@@ -55,23 +55,12 @@ async function assignFreePort(projectName, domain, projectPath, meta = {}) {
         // If it already exists, just update the meta and return existing port
         portMap[projectName] = { ...portMap[projectName], domain, path: projectPath, ...meta };
         savePortMap(portMap);
-        
-        // Ensure the port is actually free from orphan processes before returning
-        try {
-            await killPort(portMap[projectName].port);
-        } catch (e) {
-            // Ignore if no process is running
-        }
-        
         return portMap[projectName].port;
     }
 
     // Find a free port between 6100 and 7000 (avoids frontend:3000, backend:4000, serve:5000)
     const port = await findFreePortInRange(6100, 7000);
-    
-    try {
-        await killPort(port); // Double check safety
-    } catch (e) {}
+
 
     // Save to map
     portMap[projectName] = { 
