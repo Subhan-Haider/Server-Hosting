@@ -4,8 +4,8 @@ const os = require('os');
 const yaml = require('yaml');
 const { exec } = require('child_process');
 
-// Determine path to cloudflared config
-const CONFIG_PATH = path.join(os.homedir(), '.cloudflared', 'config.yml');
+// Determine path to cloudflared config — use the dedicated deployments tunnel config
+const CONFIG_PATH = path.join(os.homedir(), '.cloudflared', 'deployments-config.yml');
 
 // Helper to ensure directory exists (mostly for testing)
 function ensureDirectoryExistence(filePath) {
