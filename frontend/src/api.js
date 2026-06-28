@@ -259,6 +259,34 @@ export const api = {
     return res.json();
   },
 
+  async getCronJobs(name) {
+    const res = await fetchAuth(`${API_URL}/cron/${name}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async addCronJob(name, data) {
+    const res = await fetchAuth(`${API_URL}/cron/${name}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async deleteCronJob(name, id) {
+    const res = await fetchAuth(`${API_URL}/cron/${name}/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async triggerBackup(name) {
+    const res = await fetchAuth(`${API_URL}/backup/${name}`, { method: 'POST' });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
   async clearCache(name) {
     const res = await fetchAuth(`${API_URL}/clear-cache/${name}`, { method: 'POST' });
     if (!res.ok) throw new Error(await res.text());

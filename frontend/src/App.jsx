@@ -645,6 +645,14 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
   const [discordBusy, setDiscordBusy] = useState(false);
   const [discordMsg, setDiscordMsg] = useState('');
 
+  // Cron jobs state
+  const [cronJobs, setCronJobs] = useState(null);
+  const [newCron, setNewCron] = useState({ expression: '', type: 'restart', command: '' });
+
+  // Backup state
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMsg, setBackupMsg] = useState('');
+
   useEffect(() => {
     if (liveLogsRef.current) {
       liveLogsRef.current.scrollTop = liveLogsRef.current.scrollHeight;
@@ -656,6 +664,7 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
     if (activeTab === 'logs' && !logs) fetchLogs();
     if (activeTab === 'environment' && !envVars) fetchEnvVars();
     if (activeTab === 'overview' && metrics.length === 0) fetchMetrics();
+    if (activeTab === 'settings' && !cronJobs) fetchCronJobs();
   }, [activeTab]);
 
   const fetchEnvVars = async () => {
@@ -671,6 +680,13 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
       const data = await api.getMetrics(app.name);
       setMetrics(data.metrics || []);
     } catch (e) {}
+  };
+
+  const fetchCronJobs = async () => {
+    try {
+      const data = await api.getCronJobs(app.name);
+      setCronJobs(data.jobs || []);
+    } catch (e) { setCronJobs([]); }
   };
 
   const handleSaveEnv = async () => {
@@ -1138,6 +1154,65 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
                   </div>
                 </div>
 
+                {/* S3 Backups */}
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '24px', marginBottom: '16px' }}>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>☁️ S3 Backups</h4>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>Zip and upload the project directory to an S3-compatible storage bucket. Requires S3 secrets in the Global Vault.</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <button onClick={async () => {
+                      setBackupBusy(true); setBackupMsg('');
+                      try {
+                        const res = await api.triggerBackup(app.name);
+                        setBackupMsg(`Success! Saved as: ${res.key}`);
+                      } catch(e) { setBackupMsg(`Error: ${e.message}`); }
+                      finally { setBackupBusy(false); }
+                    }} disabled={backupBusy} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Save size={14} /> {backupBusy ? 'Backing up...' : 'Create Backup Now'}
+                    </button>
+                    {backupMsg && <span style={{ fontSize: '0.85rem', color: backupMsg.includes('Error') ? 'var(--danger)' : 'var(--success)' }}>{backupMsg}</span>}
+                  </div>
+                </div>
+
+                {/* Scheduled Tasks (Cron) */}
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '24px', marginBottom: '16px' }}>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>⏰ Scheduled Tasks (Cron Jobs)</h4>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>Run arbitrary commands or auto-restart this project on a cron schedule.</p>
+                  
+                  {cronJobs && cronJobs.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                      {cronJobs.map(job => (
+                        <div key={job.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.3)', padding: '10px 14px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          <div>
+                            <div style={{ fontFamily: 'monospace', fontWeight: 'bold', fontSize: '0.9rem', color: 'var(--accent-color)' }}>{job.expression}</div>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                              {job.type === 'restart' ? 'Restart PM2 Process' : `Run Command: ${job.command}`}
+                            </div>
+                          </div>
+                          <button onClick={async () => { await api.deleteCronJob(app.name, job.id); fetchCronJobs(); }} className="btn btn-danger" style={{ padding: '6px 10px' }}><Trash2 size={14} /></button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <form onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!newCron.expression) return;
+                    await api.addCronJob(app.name, newCron);
+                    setNewCron({ expression: '', type: 'restart', command: '' });
+                    fetchCronJobs();
+                  }} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                    <input type="text" placeholder="0 0 * * *" value={newCron.expression} onChange={e => setNewCron({...newCron, expression: e.target.value})} required style={{ width: '120px', fontFamily: 'monospace' }} />
+                    <select value={newCron.type} onChange={e => setNewCron({...newCron, type: e.target.value})} style={{ background: 'var(--bg-secondary)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', padding: '10px 14px', borderRadius: '8px' }}>
+                      <option value="restart">Restart</option>
+                      <option value="command">Run Command</option>
+                    </select>
+                    {newCron.type === 'command' && (
+                      <input type="text" placeholder="npm run db:backup" value={newCron.command} onChange={e => setNewCron({...newCron, command: e.target.value})} required style={{ flex: 1 }} />
+                    )}
+                    <button type="submit" className="btn btn-primary" style={{ padding: '10px 16px' }}>Add Job</button>
+                  </form>
+                </div>
+
                 {/* Danger Zone */}
                 <div style={{ background: 'rgba(255,0,0,0.05)', border: '1px solid rgba(255,0,0,0.2)', borderRadius: '8px', padding: '24px' }}>
                   <h4 style={{ margin: '0 0 16px 0', fontSize: '1rem', color: '#ff7b7b' }}>Danger Zone</h4>
@@ -1346,8 +1421,10 @@ function ProjectCard({ app, onAction }) {
           </div>
           {/* Status dot */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0, marginTop: '2px' }}>
-            <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: isOnline ? 'var(--success)' : app.status === 'errored' ? 'var(--danger)' : '#6b7280' }} />
-            <span style={{ fontSize: '0.72rem', color: isOnline ? 'var(--success)' : 'var(--text-secondary)', fontWeight: '500' }}>{app.status}</span>
+            <div className={isOnline && app.healthStatus === 'degraded' ? 'status-dot-offline' : isOnline ? 'status-dot-online' : app.status === 'errored' ? 'status-dot-offline' : ''} style={{ width: '7px', height: '7px', borderRadius: '50%', background: isOnline && app.healthStatus === 'degraded' ? '#f59e0b' : isOnline ? 'var(--success)' : app.status === 'errored' ? 'var(--danger)' : '#6b7280' }} />
+            <span style={{ fontSize: '0.72rem', color: isOnline && app.healthStatus === 'degraded' ? '#f59e0b' : isOnline ? 'var(--success)' : 'var(--text-secondary)', fontWeight: '500', textTransform: 'capitalize' }}>
+              {isOnline && app.healthStatus === 'degraded' ? 'degraded' : app.status}
+            </span>
           </div>
         </div>
 

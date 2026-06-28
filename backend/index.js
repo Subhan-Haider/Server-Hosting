@@ -14,6 +14,9 @@ const healthService = require('./healthService');
 const metricsService = require('./metricsService');
 const notificationService = require('./notificationService');
 const templates = require('./templates');
+const cronService = require('./cronService');
+const appHealthService = require('./appHealthService');
+const s3BackupService = require('./s3BackupService');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -58,6 +61,7 @@ app.get('/api/apps', async (req, res) => {
             const stored = storedProjects[name];
             const pm2ProcessName = stored.pm2Name || name;
             const pm2App = pm2Apps.find(p => p.name === pm2ProcessName);
+            const healthInfo = appHealthService.getHealthStatus(stored.domain);
             
             return {
                 name,
@@ -69,6 +73,7 @@ app.get('/api/apps', async (req, res) => {
                 githubUrl: stored.githubUrl,
                 createdAt: stored.createdAt,
                 status: pm2App ? pm2App.status : 'stopped',
+                healthStatus: healthInfo.status,
                 cpu: pm2App ? pm2App.cpu : 0,
                 memory: pm2App ? pm2App.memory : 0,
                 uptime: pm2App ? pm2App.uptime : 0,
@@ -217,7 +222,7 @@ app.post('/api/deploy', async (req, res) => {
         };
         historyManager.logDeployment(domain, deploymentData);
         webhookService.sendWebhook(deploymentData);
-        notificationService.sendDiscordNotification({ ...deploymentData, branch: meta.branch });
+        notificationService.sendNotifications({ ...deploymentData, branch: meta.branch });
 
         logger(`Deployment successful! Domain: ${domain}, Port: ${port}\n`);
         res.write(`data: ${JSON.stringify({ type: 'success', name: finalName, port, domain })}\n\n`);
@@ -236,7 +241,7 @@ app.post('/api/deploy', async (req, res) => {
             };
             historyManager.logDeployment(domain, deploymentData);
             webhookService.sendWebhook(deploymentData);
-            notificationService.sendDiscordNotification(deploymentData);
+            notificationService.sendNotifications(deploymentData);
         }
         res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
         res.end();
@@ -794,14 +799,14 @@ app.post('/webhook/:name', express.raw({ type: '*/*' }), async (req, res) => {
                 const noop = () => {};
                 const commitHash = await require('./gitService').redeployRepo(project.path, configuredBranch, project.installCmd, project.buildCmd, noop);
                 await pm2Service.restartProject(project.pm2Name || name);
-                notificationService.sendDiscordNotification({
+                notificationService.sendNotifications({
                     name, domain: project.domain, status: 'success',
                     type: 'redeploy', branch: configuredBranch, commitHash,
                     durationMs: Date.now() - startTime
                 });
             } catch (e) {
                 console.error(`[Webhook] Auto-redeploy failed for ${name}:`, e.message);
-                notificationService.sendDiscordNotification({
+                notificationService.sendNotifications({
                     name, domain: project.domain, status: 'error',
                     type: 'redeploy', error: e.message
                 });
@@ -841,7 +846,7 @@ app.post('/api/clear-cache/:name', async (req, res) => {
 // ─── Discord Notification Test ─────────────────────────────────────────────
 app.post('/api/notify/test', async (req, res) => {
     try {
-        await notificationService.sendDiscordNotification({
+        await notificationService.sendNotifications({
             name: 'Test Project',
             domain: 'example.subhan.tech',
             status: 'success',
@@ -857,6 +862,36 @@ app.post('/api/notify/test', async (req, res) => {
 // ─── Service Templates ─────────────────────────────────────────────────────
 app.get('/api/templates', (req, res) => {
     res.json({ templates: templates.getTemplates() });
+});
+
+// ─── Cron Jobs ─────────────────────────────────────────────────────────────
+app.get('/api/cron/:name', (req, res) => {
+    res.json({ jobs: cronService.getJobs(req.params.name) });
+});
+
+app.post('/api/cron/:name', (req, res) => {
+    const { expression, type, command } = req.body;
+    if (!expression) return res.status(400).json({ error: 'Expression is required' });
+    const job = cronService.addJob(req.params.name, expression, type, command);
+    res.json({ message: 'Cron job added successfully', job });
+});
+
+app.delete('/api/cron/:name/:id', (req, res) => {
+    cronService.deleteJob(req.params.id);
+    res.json({ message: 'Cron job deleted successfully' });
+});
+
+// ─── S3 Backups ────────────────────────────────────────────────────────────
+app.post('/api/backup/:name', async (req, res) => {
+    try {
+        const project = portManager.getProjectDetails(req.params.name);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        
+        const result = await s3BackupService.createBackup(req.params.name, project.path);
+        res.json({ message: 'Backup uploaded successfully', key: result.key });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.get('/api/logs/:name', async (req, res) => {
