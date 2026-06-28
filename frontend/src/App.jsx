@@ -66,6 +66,8 @@ function App() {
   };
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+
     fetchApps();
     fetchSecrets();
     fetchCrashes();
@@ -74,7 +76,7 @@ function App() {
       fetchCrashes();
     }, 5000); // Poll every 5s
     return () => clearInterval(interval);
-  }, []);
+  }, [isAuthenticated]);
 
   const handleDeploy = async (e) => {
     e.preventDefault();
