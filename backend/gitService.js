@@ -213,13 +213,20 @@ async function cloneAndSetup(rawRepoUrl, pat, projectName, branch = 'main', user
     };
 }
 
-async function redeployRepo(projectPath, branch, installCmd, buildCmd, logger = null) {
-    if (logger) logger(`Redeploying project at ${projectPath}...\n`);
-    console.log(`Redeploying project at ${projectPath}...`);
+async function redeployRepo(repoUrl, pat, projectName, branch, installCmd, buildCmd, logger = null) {
+    const finalProjectName = `${projectName}-${Date.now()}`;
+    const projectPath = path.join(PROJECTS_DIR, finalProjectName);
     
-    // Git pull latest
-    await runCommand('git fetch', projectPath, logger);
-    await runCommand(`git reset --hard origin/${branch}`, projectPath, logger);
+    if (logger) logger(`Redeploying project to new folder ${projectPath}...\n`);
+    console.log(`Redeploying project to new folder ${projectPath}...`);
+    
+    ensureProjectsDir();
+
+    const authUrl = getAuthRepoUrl(repoUrl, pat);
+
+    if (logger) logger(`Cloning branch ${branch}...\n`);
+    console.log(`Cloning ${repoUrl} (branch: ${branch}) to ${projectPath}`);
+    await runCommand(`git clone -b ${branch} --single-branch ${authUrl} "${projectPath}"`, PROJECTS_DIR, logger);
 
     if (installCmd) {
         if (logger) logger(`Running install command: ${installCmd}\n`);
@@ -233,16 +240,16 @@ async function redeployRepo(projectPath, branch, installCmd, buildCmd, logger = 
         await runCommand(buildCmd, projectPath, logger);
     }
 
-    // Re-patch vite config after redeploy (git reset may have reverted it)
+    // Patch vite config if exists
     patchViteConfig(projectPath);
 
     let commitHash = 'unknown';
     try {
         const hashOut = await runCommand('git rev-parse HEAD', projectPath);
-        commitHash = hashOut.stdout.trim(); // Fixed: use stdout
+        commitHash = hashOut.stdout.trim();
     } catch (e) {}
 
-    return commitHash;
+    return { commitHash, newPath: projectPath };
 }
 
 async function rollbackRepo(projectPath, commitHash, installCmd, buildCmd) {

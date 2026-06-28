@@ -120,6 +120,28 @@ export const api = {
     return res.json();
   },
 
+  async getFiles(name, dir = '') {
+    const res = await fetch(`${API_URL}/files/${name}?dir=${encodeURIComponent(dir)}`);
+    if (!res.ok) throw new Error('Failed to fetch files');
+    return res.json();
+  },
+
+  async getFileContent(name, file = '') {
+    const res = await fetch(`${API_URL}/file/${name}/read?file=${encodeURIComponent(file)}`);
+    if (!res.ok) throw new Error('Failed to fetch file content');
+    return res.json();
+  },
+
+  async saveFileContent(name, file, content) {
+    const res = await fetch(`${API_URL}/file/${name}/write?file=${encodeURIComponent(file)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    });
+    if (!res.ok) throw new Error('Failed to save file');
+    return res.json();
+  },
+
   async getCrashes() {
     const res = await fetch(`${API_URL}/crashes`);
     if (!res.ok) throw new Error('Failed to fetch crashes');

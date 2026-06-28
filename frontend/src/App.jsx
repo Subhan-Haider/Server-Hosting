@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings, ExternalLink, Code2, LogOut, CheckCircle, Bell, Key } from 'lucide-react';
+import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings, ExternalLink, Code2, LogOut, CheckCircle, Bell, Key, FileText, Save, X, Search } from 'lucide-react';
 import { api } from './api';
 
 function App() {
@@ -719,13 +719,13 @@ function App() {
       )}
     </div>
   );
-}
-
 function AppCard({ app, onAction, delay }) {
   const [logs, setLogs] = useState(null);
   const [history, setHistory] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showFiles, setShowFiles] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
+  const [logSearch, setLogSearch] = useState('');
 
   const handleAction = async (action) => {
     setLoadingAction(true);
@@ -741,6 +741,21 @@ function AppCard({ app, onAction, delay }) {
     } finally {
       setLoadingAction(false);
     }
+  };
+
+  const renderFilteredLogs = (text) => {
+    if (!text) return 'No output logs';
+    const lines = text.split('\n');
+    const filtered = lines.filter(l => l.toLowerCase().includes(logSearch.toLowerCase()));
+    
+    return filtered.map((line, i) => {
+      let color = '#c9d1d9';
+      if (line.includes('ERROR') || line.includes('Error')) color = '#ff7b7b';
+      else if (line.includes('WARN')) color = '#ffa657';
+      else if (line.includes('INFO')) color = '#79c0ff';
+      
+      return <div key={i} style={{ color }}>{line}</div>;
+    });
   };
 
   const toggleLogs = async () => {
@@ -848,6 +863,9 @@ function AppCard({ app, onAction, delay }) {
         <button className="btn btn-secondary" onClick={toggleLogs}>
           <Terminal size={16} /> Logs
         </button>
+        <button className="btn btn-secondary" onClick={() => setShowFiles(true)}>
+          <Folder size={16} /> Files
+        </button>
         {app.deployType === 'github' && (
           <button className="btn btn-secondary" onClick={toggleHistory} disabled={loadingAction}>
             <Activity size={16} /> History
@@ -862,12 +880,24 @@ function AppCard({ app, onAction, delay }) {
 
       {logs && (
         <div className="logs-container">
-          <div className="logs-title">Standard Output</div>
-          <pre>{logs.out || 'No output logs'}</pre>
+          <div className="logs-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Standard Output</span>
+            <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: '4px' }}>
+              <Search size={14} style={{ marginRight: '6px', opacity: 0.6 }} />
+              <input 
+                type="text" 
+                placeholder="Search logs..." 
+                value={logSearch}
+                onChange={e => setLogSearch(e.target.value)}
+                style={{ background: 'transparent', border: 'none', color: '#fff', outline: 'none', fontSize: '0.85rem' }}
+              />
+            </div>
+          </div>
+          <pre style={{ maxHeight: '300px', overflowY: 'auto' }}>{renderFilteredLogs(logs.out)}</pre>
           {logs.err && (
             <>
               <div className="logs-title" style={{ marginTop: '12px' }}>Error Output</div>
-              <pre style={{ color: 'var(--danger)' }}>{logs.err}</pre>
+              <pre style={{ maxHeight: '300px', overflowY: 'auto' }}>{renderFilteredLogs(logs.err)}</pre>
             </>
           )}
         </div>
@@ -919,6 +949,8 @@ function AppCard({ app, onAction, delay }) {
           </div>
         </div>
       )}
+
+      {showFiles && <FileExplorerModal app={app} onClose={() => setShowFiles(false)} />}
     </div>
   );
 }
@@ -1051,3 +1083,148 @@ function GitHubConnect({ onConnected, onClose }) {
 }
 
 export default App;
+
+function FileExplorerModal({ app, onClose }) {
+  const [currentDir, setCurrentDir] = useState('');
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [fileContent, setFileContent] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchDir(currentDir);
+  }, [currentDir]);
+
+  const fetchDir = async (dir) => {
+    setLoading(true);
+    try {
+      const data = await api.getFiles(app.name, dir);
+      setFiles(data);
+    } catch (err) {
+      alert('Error fetching files: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFileClick = async (file) => {
+    if (file.isDirectory) {
+      setCurrentDir(file.path);
+    } else {
+      setLoading(true);
+      try {
+        const data = await api.getFileContent(app.name, file.path);
+        setFileContent(data.content);
+        setSelectedFile(file);
+      } catch (err) {
+        alert('Error reading file: ' + err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  const handleSave = async () => {
+    if (!selectedFile) return;
+    setSaving(true);
+    try {
+      await api.saveFileContent(app.name, selectedFile.path, fileContent);
+      alert('File saved!');
+    } catch (err) {
+      alert('Error saving file: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const goUp = () => {
+    if (!currentDir) return;
+    const parts = currentDir.split('/');
+    parts.pop();
+    setCurrentDir(parts.join('/'));
+  };
+
+  return (
+    <div className="modal-backdrop" style={{ zIndex: 100 }}>
+      <div className="modal glass-panel" style={{ width: '800px', height: '600px', display: 'flex', flexDirection: 'column' }}>
+        <div className="modal-header">
+          <h2>📁 Files - {app.name}</h2>
+          <button className="btn btn-secondary" onClick={onClose}><X size={16} /></button>
+        </div>
+        
+        <div style={{ display: 'flex', flex: 1, gap: '16px', minHeight: 0 }}>
+          {/* File Tree */}
+          <div style={{ width: '250px', display: 'flex', flexDirection: 'column', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', padding: '8px', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+              <button className="btn btn-secondary" onClick={goUp} disabled={!currentDir} style={{ padding: '4px' }}>
+                ↑ Up
+              </button>
+              <span style={{ fontSize: '0.8rem', opacity: 0.7, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                /{currentDir}
+              </span>
+            </div>
+            
+            {loading && !selectedFile ? (
+              <div style={{ padding: '8px', opacity: 0.5 }}>Loading...</div>
+            ) : (
+              files.map(f => (
+                <div 
+                  key={f.name} 
+                  onClick={() => handleFileClick(f)}
+                  style={{ 
+                    padding: '6px 8px', 
+                    cursor: 'pointer', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px',
+                    borderRadius: '4px',
+                    background: selectedFile?.path === f.path ? 'rgba(255,255,255,0.1)' : 'transparent'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = selectedFile?.path === f.path ? 'rgba(255,255,255,0.1)' : 'transparent'}
+                >
+                  {f.isDirectory ? <Folder size={14} style={{ color: '#ffd700' }}/> : <FileText size={14} style={{ color: '#888' }}/>}
+                  <span style={{ fontSize: '0.9rem' }}>{f.name}</span>
+                </div>
+              ))
+            )}
+          </div>
+          
+          {/* Editor */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'rgba(0,0,0,0.3)', borderRadius: '8px', overflow: 'hidden' }}>
+            {selectedFile ? (
+              <>
+                <div style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.9rem', fontWeight: 500 }}>{selectedFile.name}</span>
+                  <button className="btn btn-primary" onClick={handleSave} disabled={saving} style={{ padding: '4px 12px' }}>
+                    <Save size={14} /> {saving ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+                <textarea 
+                  value={fileContent} 
+                  onChange={e => setFileContent(e.target.value)}
+                  style={{
+                    flex: 1,
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#e0e0e0',
+                    fontFamily: 'monospace',
+                    padding: '12px',
+                    resize: 'none',
+                    outline: 'none'
+                  }}
+                  spellCheck="false"
+                />
+              </>
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>
+                Select a file to edit
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

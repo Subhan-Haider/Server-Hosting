@@ -8,6 +8,7 @@ const envService = require('./envService');
 const authService = require('./authService');
 const historyManager = require('./historyManager');
 const secretsManager = require('./secretsManager');
+const webhookService = require('./webhookService');
 
 const app = express();
 app.use(cors({
@@ -38,7 +39,8 @@ app.get('/api/apps', async (req, res) => {
         // Merge PM2 stats with stored project info (domain, port, path)
         const apps = Object.keys(storedProjects).map(name => {
             const stored = storedProjects[name];
-            const pm2App = pm2Apps.find(p => p.name === name);
+            const pm2ProcessName = stored.pm2Name || name;
+            const pm2App = pm2Apps.find(p => p.name === pm2ProcessName);
             
             return {
                 name,
@@ -52,7 +54,8 @@ app.get('/api/apps', async (req, res) => {
                 status: pm2App ? pm2App.status : 'stopped',
                 cpu: pm2App ? pm2App.cpu : 0,
                 memory: pm2App ? pm2App.memory : 0,
-                uptime: pm2App ? pm2App.uptime : 0
+                uptime: pm2App ? pm2App.uptime : 0,
+                pm2Name: pm2ProcessName
             };
         });
         
@@ -187,12 +190,16 @@ app.post('/api/deploy', async (req, res) => {
         logger('Updating Cloudflare Tunnel...\n');
         await cloudflareService.updateCloudflareConfig(domain, port);
         
-        historyManager.logDeployment(domain, {
+        const deploymentData = {
+            name: finalName,
+            domain: domain,
             status: 'success',
             commitHash: meta.commitHash,
             durationMs: Date.now() - deployStartTime,
             type: 'deploy'
-        });
+        };
+        historyManager.logDeployment(domain, deploymentData);
+        webhookService.sendWebhook(deploymentData);
 
         logger(`Deployment successful! Domain: ${domain}, Port: ${port}\n`);
         res.write(`data: ${JSON.stringify({ type: 'success', name: finalName, port, domain })}\n\n`);
@@ -201,12 +208,16 @@ app.post('/api/deploy', async (req, res) => {
         console.error('Deployment error:', err);
         logger(`Deployment error: ${err.message}\n`);
         if (domain) {
-            historyManager.logDeployment(domain, {
+            const deploymentData = {
+                name: name,
+                domain: domain,
                 status: 'error',
                 error: err.message,
                 durationMs: Date.now() - deployStartTime,
                 type: 'deploy'
-            });
+            };
+            historyManager.logDeployment(domain, deploymentData);
+            webhookService.sendWebhook(deploymentData);
         }
         res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
         res.end();
@@ -222,21 +233,54 @@ app.post('/api/redeploy/:name', async (req, res) => {
         if (!project) return res.status(404).json({ error: 'Project not found' });
         if (project.deployType !== 'github') return res.status(400).json({ error: 'Only GitHub deployments can be redeployed' });
         
-        // Stop PM2 process first
-        await pm2Service.stopProject(name).catch(() => {});
+        // Zero-Downtime Blue/Green Deploy
+        const oldPm2Name = project.pm2Name || name;
+        const oldPath = project.path;
         
-        // Redeploy repo (git fetch, reset, install, build)
-        const commitHash = await gitService.redeployRepo(project.path, project.branch || 'main', project.installCmd, project.buildCmd);
+        // 1. Redeploy repo to NEW folder
+        const { commitHash, newPath } = await gitService.redeployRepo(
+            project.githubUrl, 
+            project.githubPat, 
+            name, 
+            project.branch || 'main', 
+            project.installCmd, 
+            project.buildCmd
+        );
         
-        // Start PM2 process again
-        await pm2Service.startProject(name, project.path, project.port, project.startCmd);
+        // 2. Assign NEW port and start new PM2 process
+        const newPm2Name = `${name}-${Date.now()}`;
+        const newPort = await portManager.assignFreePort(name, project.domain, newPath, { ...project, pm2Name: newPm2Name });
         
-        historyManager.logDeployment(project.domain, {
+        // Inherit global secrets and local env vars
+        const envKeys = envService.scanForEnvKeys(newPath);
+        if (envKeys.length > 0 || fs.existsSync(path.join(oldPath, '.env.local'))) {
+            // Best effort copy of old .env.local if exists
+            try {
+                if (fs.existsSync(path.join(oldPath, '.env.local'))) {
+                    fs.copyFileSync(path.join(oldPath, '.env.local'), path.join(newPath, '.env.local'));
+                }
+            } catch (e) {}
+        }
+        
+        await pm2Service.startProject(newPm2Name, newPath, newPort, project.startCmd);
+        
+        // 3. Update Cloudflare to new port
+        await cloudflareService.updateCloudflareConfig(project.domain, newPort);
+        
+        // 4. Stop and delete old PM2 process, delete old directory
+        await pm2Service.deleteProject(oldPm2Name).catch(() => {});
+        fs.rmSync(oldPath, { recursive: true, force: true });
+        
+        const deploymentData = {
+            name: name,
+            domain: project.domain,
             status: 'success',
             commitHash,
             durationMs: Date.now() - deployStartTime,
             type: 'redeploy'
-        });
+        };
+        historyManager.logDeployment(project.domain, deploymentData);
+        webhookService.sendWebhook(deploymentData);
 
         res.json({ message: 'Redeployed successfully' });
     } catch (err) {
@@ -244,12 +288,16 @@ app.post('/api/redeploy/:name', async (req, res) => {
         if (req.params.name) {
             const project = portManager.getProjectDetails(req.params.name);
             if (project) {
-                historyManager.logDeployment(project.domain, {
+                const deploymentData = {
+                    name: req.params.name,
+                    domain: project.domain,
                     status: 'error',
                     error: err.message,
                     durationMs: Date.now() - deployStartTime,
                     type: 'redeploy'
-                });
+                };
+                historyManager.logDeployment(project.domain, deploymentData);
+                webhookService.sendWebhook(deploymentData);
             }
         }
         res.status(500).json({ error: err.message });
@@ -259,11 +307,9 @@ app.post('/api/redeploy/:name', async (req, res) => {
 app.post('/api/start/:name', async (req, res) => {
     try {
         const { name } = req.params;
-        // In case it's completely stopped or removed from PM2, we might need to use startProject again
-        // But PM2 'start' on an existing stopped process will restart it.
-        // Actually, if it's in PM2 memory, pm2.restart is better for stopped apps.
-        // Let's just use restart for both start and restart.
-        await pm2Service.restartProject(name);
+        const project = portManager.getProjectDetails(name);
+        const pm2Name = project?.pm2Name || name;
+        await pm2Service.restartProject(pm2Name);
         res.json({ message: 'Started' });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -273,7 +319,9 @@ app.post('/api/start/:name', async (req, res) => {
 app.post('/api/stop/:name', async (req, res) => {
     try {
         const { name } = req.params;
-        await pm2Service.stopProject(name);
+        const project = portManager.getProjectDetails(name);
+        const pm2Name = project?.pm2Name || name;
+        await pm2Service.stopProject(pm2Name);
         res.json({ message: 'Stopped' });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -283,7 +331,9 @@ app.post('/api/stop/:name', async (req, res) => {
 app.post('/api/restart/:name', async (req, res) => {
     try {
         const { name } = req.params;
-        await pm2Service.restartProject(name);
+        const project = portManager.getProjectDetails(name);
+        const pm2Name = project?.pm2Name || name;
+        await pm2Service.restartProject(pm2Name);
         res.json({ message: 'Restarted' });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -295,8 +345,9 @@ app.delete('/api/projects/:name', async (req, res) => {
         const { name } = req.params;
         const project = portManager.getProjectDetails(name);
         
-        await pm2Service.stopProject(name).catch(() => {});
-        await pm2Service.deleteProject(name).catch(() => {});
+        const pm2Name = project?.pm2Name || name;
+        await pm2Service.stopProject(pm2Name).catch(() => {});
+        await pm2Service.deleteProject(pm2Name).catch(() => {});
         
         if (project && project.domain) {
             await cloudflareService.removeCloudflareConfig(project.domain);
@@ -327,10 +378,12 @@ app.post('/api/rollback/:domain/:commit', async (req, res) => {
         if (!project) return res.status(404).json({ error: 'Project not found' });
         
         const startTime = Date.now();
-        await pm2Service.stopProject(project.name).catch(() => {});
+        const oldPm2Name = project.pm2Name || project.name;
+        
+        await pm2Service.stopProject(oldPm2Name).catch(() => {});
         
         await gitService.rollbackRepo(project.path, commit, project.installCmd, project.buildCmd);
-        await pm2Service.startProject(project.name, project.path, project.port, project.startCmd);
+        await pm2Service.startProject(oldPm2Name, project.path, project.port, project.startCmd);
         
         historyManager.logDeployment(domain, {
             status: 'success',
@@ -449,6 +502,80 @@ app.post('/api/report-crash', (req, res) => {
     }
 });
 
+// --- File Explorer Endpoints ---
+app.get('/api/files/:name', (req, res) => {
+    try {
+        const { name } = req.params;
+        const project = portManager.getProjectDetails(name);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        
+        const dirParam = req.query.dir || '';
+        const targetPath = path.join(project.path, dirParam);
+        
+        // Security check
+        if (!targetPath.startsWith(project.path)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+        if (!fs.existsSync(targetPath)) {
+            return res.status(404).json({ error: 'Directory not found' });
+        }
+
+        const items = fs.readdirSync(targetPath, { withFileTypes: true });
+        const result = items.map(item => ({
+            name: item.name,
+            isDirectory: item.isDirectory(),
+            path: path.join(dirParam, item.name).replace(/\\/g, '/')
+        }));
+        
+        result.sort((a, b) => {
+            if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
+            return a.isDirectory ? -1 : 1;
+        });
+
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/file/:name/read', (req, res) => {
+    try {
+        const { name } = req.params;
+        const project = portManager.getProjectDetails(name);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        
+        const fileParam = req.query.file || '';
+        const targetPath = path.join(project.path, fileParam);
+        
+        if (!targetPath.startsWith(project.path)) return res.status(403).json({ error: 'Access denied' });
+        if (!fs.existsSync(targetPath)) return res.status(404).json({ error: 'File not found' });
+        
+        const content = fs.readFileSync(targetPath, 'utf8');
+        res.json({ content });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/file/:name/write', (req, res) => {
+    try {
+        const { name } = req.params;
+        const project = portManager.getProjectDetails(name);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        
+        const fileParam = req.query.file || '';
+        const { content } = req.body;
+        const targetPath = path.join(project.path, fileParam);
+        
+        if (!targetPath.startsWith(project.path)) return res.status(403).json({ error: 'Access denied' });
+        
+        fs.writeFileSync(targetPath, content, 'utf8');
+        res.json({ message: 'File saved' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/crashes', (req, res) => {
     res.json(crashStore);
 });
@@ -456,7 +583,9 @@ app.get('/api/crashes', (req, res) => {
 app.get('/api/logs/:name', async (req, res) => {
     try {
         const { name } = req.params;
-        const logs = await pm2Service.getLogs(name);
+        const project = portManager.getProjectDetails(name);
+        const pm2Name = project?.pm2Name || name;
+        const logs = await pm2Service.getLogs(pm2Name);
         res.json(logs);
     } catch (err) {
         res.status(500).json({ error: err.message });

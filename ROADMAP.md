@@ -49,7 +49,7 @@ Multiple people can log in with different permission levels (viewer vs deployer 
 ### 11. Docker Support (Deploy Anything)
 Instead of just auto-detecting Node.js and Vite, allow users to deploy any repository that has a `Dockerfile`. The backend would run `docker build` and `docker run`, meaning you could host Python, Go, Rust, or PHP apps!
 
-### 12. Zero-Downtime Deployments
+### 12. Zero-Downtime Deployments (Completed ✅)
 Right now, PM2 stops the old app and starts the new one. Implement a system that starts the new version on a *new* port first, verifies it works, and only then updates Cloudflare and stops the old one.
 
 ### 13. Custom Subdomains
@@ -62,7 +62,7 @@ Currently, the subdomain is generated from the project name. Add a feature so us
 ### 14. Web Terminal
 Embed a real terminal in the dashboard (using a library like `xterm.js`). This would let you run commands directly on the VPS from the browser without needing PuTTY or SSH.
 
-### 15. In-Browser File Editor
+### 15. In-Browser File Editor (Completed ✅)
 Add a lightweight file explorer that lets you see the files of a deployed app and make quick edits to things like `.env` files or small code typos directly from the dashboard.
 
 ### 16. Cron Jobs / Scheduled Tasks
@@ -72,13 +72,13 @@ A UI to set up tasks that run on a schedule (e.g., "Run `npm run backup` every d
 
 ## Monitoring & Alerts
 
-### 17. Discord / Slack Webhooks
+### 17. Discord / Slack Webhooks (Completed ✅)
 Add a settings page where you can drop a Discord webhook URL. Every time an app finishes deploying (or fails), it sends a nice notification message to your Discord server.
 
 ### 18. Basic Analytics
 Since the platform controls the reverse proxy (or via a small middleware), track how many people are visiting each of the apps and show a simple graph of "Views Today" in the dashboard.
 
-### 19. Log Search & Filter
+### 19. Log Search & Filter (Completed ✅)
 Instead of just viewing the last X lines of logs, add a search bar to filter logs by keyword (e.g., "Error" or "Exception") and color-code the log output.
 
 ---
