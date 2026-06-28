@@ -1,52 +1,37 @@
-const fetch = require('node-fetch');
+// Use native fetch (Node 18+) — no external dependency needed
+// This should be available on any modern Node.js installation
 
-// This should ideally be placed in a .env file on the VPS
-// For this Control Center to work out of the box, the user must provide their own OAuth App Client ID
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || 'Ov23liqbRAyRp8ZsT3fB';
 
-async function requestDeviceCode() {
-    if (GITHUB_CLIENT_ID === 'YOUR_GITHUB_CLIENT_ID_HERE') {
-        throw new Error('GitHub Client ID not configured. Please set GITHUB_CLIENT_ID in your environment.');
-    }
-
-    const res = await fetch('https://github.com/login/device/code', {
+async function githubPost(url, body) {
+    const res = await fetch(url, {
         method: 'POST',
         headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-            client_id: GITHUB_CLIENT_ID,
-            scope: 'repo user'
-        })
+        body: JSON.stringify(body)
     });
-    
     if (!res.ok) {
-        throw new Error('Failed to request device code');
+        const text = await res.text();
+        throw new Error(`GitHub API error ${res.status}: ${text}`);
     }
-    
     return res.json();
 }
 
-async function pollForToken(deviceCode) {
-    const res = await fetch('https://github.com/login/oauth/access_token', {
-        method: 'POST',
-        headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            client_id: GITHUB_CLIENT_ID,
-            device_code: deviceCode,
-            grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
-        })
+async function requestDeviceCode() {
+    return githubPost('https://github.com/login/device/code', {
+        client_id: GITHUB_CLIENT_ID,
+        scope: 'repo user'
     });
+}
 
-    if (!res.ok) {
-        throw new Error('Failed to poll for token');
-    }
-
-    return res.json(); // returns access_token if successful, or error like 'authorization_pending'
+async function pollForToken(deviceCode) {
+    return githubPost('https://github.com/login/oauth/access_token', {
+        client_id: GITHUB_CLIENT_ID,
+        device_code: deviceCode,
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
+    });
 }
 
 module.exports = {
