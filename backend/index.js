@@ -56,9 +56,6 @@ app.get('/api/apps', async (req, res) => {
     }
 });
 
-const envService = require('./envService');
-const authService = require('./authService');
-
 // Auth Endpoints
 app.post('/api/auth/device', async (req, res) => {
     try {
