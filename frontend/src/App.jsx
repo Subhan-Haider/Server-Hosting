@@ -66,6 +66,12 @@ function App() {
   };
 
   useEffect(() => {
+    const handleAuthError = () => setIsAuthenticated(false);
+    window.addEventListener('auth_error', handleAuthError);
+    return () => window.removeEventListener('auth_error', handleAuthError);
+  }, []);
+
+  useEffect(() => {
     if (!isAuthenticated) return;
 
     fetchApps();

@@ -10,7 +10,8 @@ const fetchAuth = async (url, options = {}) => {
   const res = await fetch(url, { ...options, headers });
   if (res.status === 401 || res.status === 403) {
     localStorage.removeItem('authToken');
-    window.location.reload();
+    authToken = null;
+    window.dispatchEvent(new Event('auth_error'));
   }
   return res;
 };
