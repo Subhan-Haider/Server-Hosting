@@ -42,7 +42,12 @@ function extractProjectNameFromUrl(repoUrl) {
 
 function runCommand(command, cwd) {
     return new Promise((resolve, reject) => {
-        exec(command, { cwd }, (error, stdout, stderr) => {
+        const env = {
+            ...process.env,
+            GIT_TERMINAL_PROMPT: '0',  // Prevent git from prompting for credentials
+            GIT_ASKPASS: 'echo',       // Return empty string for any credential prompt
+        };
+        exec(command, { cwd, env }, (error, stdout, stderr) => {
             if (error) {
                 console.error(`Error executing ${command}:`, error);
                 reject(error);
