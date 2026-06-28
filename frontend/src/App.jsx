@@ -366,11 +366,47 @@ function App() {
                 <div className="form-group" style={{ marginTop: '16px' }}>
                   <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>🔐 Environment Variables (.env.local)</span>
-                    <button
-                      type="button"
-                      onClick={() => setEnvVars([...envVars, { key: '', value: '' }])}
-                      style={{ fontSize: '0.75rem', padding: '2px 8px', background: 'var(--accent-color)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-                    >+ Add Variable</button>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const text = await navigator.clipboard.readText();
+                            if (!text) return;
+                            const lines = text.split('\n');
+                            const newVars = [];
+                            lines.forEach(line => {
+                              const trimmed = line.trim();
+                              if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+                                const splitIdx = trimmed.indexOf('=');
+                                const key = trimmed.substring(0, splitIdx).trim();
+                                let value = trimmed.substring(splitIdx + 1).trim();
+                                // Remove surrounding quotes if present
+                                if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+                                  value = value.substring(1, value.length - 1);
+                                }
+                                if (key) newVars.push({ key, value });
+                              }
+                            });
+                            if (newVars.length > 0) {
+                              setEnvVars(prev => {
+                                const filtered = prev.filter(v => v.key.trim() !== '');
+                                return [...filtered, ...newVars];
+                              });
+                            }
+                          } catch (err) {
+                            alert('Clipboard access denied. Please allow clipboard permissions to use Smart Paste.');
+                          }
+                        }}
+                        style={{ fontSize: '0.75rem', padding: '2px 8px', background: 'rgba(255,255,255,0.1)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '4px', cursor: 'pointer' }}
+                        title="Copy your .env file contents and click this to auto-fill"
+                      >📋 Smart Paste</button>
+                      <button
+                        type="button"
+                        onClick={() => setEnvVars([...envVars, { key: '', value: '' }])}
+                        style={{ fontSize: '0.75rem', padding: '2px 8px', background: 'var(--accent-color)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                      >+ Add Variable</button>
+                    </div>
                   </label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '8px' }}>
                     {envVars.map((ev, i) => (
