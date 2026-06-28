@@ -104,6 +104,42 @@ export const api = {
     }
   },
 
+  async redeployApp(name, onLog) {
+    const res = await fetchAuth(`${API_URL}/redeploy/${name}`, { method: 'POST' });
+    if (!res.ok) throw new Error(await res.text());
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      let parts = buffer.split('\n\n');
+      buffer = parts.pop();
+
+      for (const part of parts) {
+        if (part.startsWith('data: ')) {
+          const jsonStr = part.substring(6);
+          try {
+            const parsed = JSON.parse(jsonStr);
+            if (parsed.type === 'log' && onLog) {
+              onLog(parsed.message);
+            } else if (parsed.type === 'error') {
+              throw new Error(parsed.error);
+            } else if (parsed.type === 'success') {
+              return parsed;
+            }
+          } catch (e) {
+            if (e.message && !e.message.includes('JSON')) throw e;
+          }
+        }
+      }
+    }
+  },
+
   async actionApp(name, action) {
     const res = await fetchAuth(`${API_URL}/${action}/${name}`, {
       method: action === 'delete' ? 'DELETE' : 'POST'

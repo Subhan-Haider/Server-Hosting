@@ -10,6 +10,9 @@ export default function Login({ onLogin }) {
     setError('');
     try {
       const result = await signInWithPopup(auth, provider);
+      if (result.user.email !== 'setupg98@gmail.com') {
+        throw new Error('Access Denied. Only setupg98@gmail.com is authorized.');
+      }
       const token = await result.user.getIdToken();
       onLogin(token);
     } catch (err) {

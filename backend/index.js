@@ -239,17 +239,37 @@ app.post('/api/deploy', async (req, res) => {
 
 app.post('/api/redeploy/:name', async (req, res) => {
     const deployStartTime = Date.now();
+
+    // Set up SSE streaming
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const logger = (msg) => {
+        res.write(`data: ${JSON.stringify({ type: 'log', message: msg })}\n\n`);
+    };
+
     try {
         const { name } = req.params;
         const project = portManager.getProjectDetails(name);
         
-        if (!project) return res.status(404).json({ error: 'Project not found' });
-        if (project.deployType !== 'github') return res.status(400).json({ error: 'Only GitHub deployments can be redeployed' });
+        if (!project) {
+            res.write(`data: ${JSON.stringify({ type: 'error', error: 'Project not found' })}\n\n`);
+            return res.end();
+        }
+        if (project.deployType !== 'github') {
+            res.write(`data: ${JSON.stringify({ type: 'error', error: 'Only GitHub deployments can be redeployed' })}\n\n`);
+            return res.end();
+        }
         
         // Zero-Downtime Blue/Green Deploy
         const oldPm2Name = project.pm2Name || name;
         const oldPath = project.path;
         
+        logger(`Starting zero-downtime redeploy for ${name}...\n`);
+        logger(`Repository: ${project.githubUrl}\n`);
+        logger(`Branch: ${project.branch || 'main'}\n\n`);
+
         // 1. Redeploy repo to NEW folder
         const { commitHash, newPath } = await gitService.redeployRepo(
             project.githubUrl, 
@@ -257,30 +277,33 @@ app.post('/api/redeploy/:name', async (req, res) => {
             name, 
             project.branch || 'main', 
             project.installCmd, 
-            project.buildCmd
+            project.buildCmd,
+            logger
         );
         
+        logger(`\nBuild complete! Switching traffic...\n`);
+
         // 2. Assign NEW port and start new PM2 process
         const newPm2Name = `${name}-${Date.now()}`;
         const newPort = await portManager.assignFreePort(name, project.domain, newPath, { ...project, pm2Name: newPm2Name });
         
         // Inherit global secrets and local env vars
-        const envKeys = envService.scanForEnvKeys(newPath);
-        if (envKeys.length > 0 || fs.existsSync(path.join(oldPath, '.env.local'))) {
-            // Best effort copy of old .env.local if exists
-            try {
-                if (fs.existsSync(path.join(oldPath, '.env.local'))) {
-                    fs.copyFileSync(path.join(oldPath, '.env.local'), path.join(newPath, '.env.local'));
-                }
-            } catch (e) {}
-        }
+        try {
+            if (fs.existsSync(path.join(oldPath, '.env.local'))) {
+                fs.copyFileSync(path.join(oldPath, '.env.local'), path.join(newPath, '.env.local'));
+                logger(`Copied .env.local from old deployment\n`);
+            }
+        } catch (e) {}
         
+        logger(`Starting new PM2 process on port ${newPort}...\n`);
         await pm2Service.startProject(newPm2Name, newPath, newPort, project.startCmd);
         
         // 3. Update Cloudflare to new port
+        logger(`Updating Cloudflare routing...\n`);
         await cloudflareService.updateCloudflareConfig(project.domain, newPort);
         
         // 4. Stop and delete old PM2 process, delete old directory
+        logger(`Cleaning up old deployment...\n`);
         await pm2Service.deleteProject(oldPm2Name).catch(() => {});
         fs.rmSync(oldPath, { recursive: true, force: true });
         
@@ -295,9 +318,12 @@ app.post('/api/redeploy/:name', async (req, res) => {
         historyManager.logDeployment(project.domain, deploymentData);
         webhookService.sendWebhook(deploymentData);
 
-        res.json({ message: 'Redeployed successfully' });
+        logger(`\n✅ Redeploy successful! Live at https://${project.domain}\n`);
+        res.write(`data: ${JSON.stringify({ type: 'success', name, port: newPort, domain: project.domain })}\n\n`);
+        res.end();
     } catch (err) {
         console.error('Redeploy error:', err);
+        logger(`\n❌ Redeploy failed: ${err.message}\n`);
         if (req.params.name) {
             const project = portManager.getProjectDetails(req.params.name);
             if (project) {
@@ -313,7 +339,8 @@ app.post('/api/redeploy/:name', async (req, res) => {
                 webhookService.sendWebhook(deploymentData);
             }
         }
-        res.status(500).json({ error: err.message });
+        res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
+        res.end();
     }
 });
 
@@ -460,12 +487,50 @@ app.post('/api/rollback/:domain/:commit', async (req, res) => {
     }
 });
 
+const prService = require('./prService');
+
 // --- GitHub Webhook Endpoint ---
 app.post('/api/webhook/github', async (req, res) => {
     try {
-        // GitHub sends repository.html_url or clone_url
         const repoUrl = req.body.repository?.html_url || req.body.repository?.clone_url;
-        // Ref is like "refs/heads/main"
+        const repoFullName = req.body.repository?.full_name;
+        
+        // Handle Pull Request Events
+        if (req.body.pull_request) {
+            const action = req.body.action;
+            const prNumber = req.body.number;
+            const prBranch = req.body.pull_request.head.ref;
+            
+            if (!repoUrl || !prBranch) {
+                return res.status(200).send('Ignored: missing repoUrl or prBranch');
+            }
+            
+            const allProjects = portManager.getAllProjects();
+            const entries = Object.values(allProjects);
+            
+            // Find the base project that matches this repo
+            let baseProject = null;
+            for (const project of entries) {
+                if (project.deployType === 'github' && project.githubUrl && !project.isPR) {
+                    const url1 = project.githubUrl.replace(/\.git$/, '').toLowerCase();
+                    const url2 = repoUrl.replace(/\.git$/, '').toLowerCase();
+                    if (url1 === url2) {
+                        baseProject = project;
+                        break;
+                    }
+                }
+            }
+            
+            if (baseProject) {
+                // Handle in background
+                prService.handlePullRequest(action, repoFullName, prNumber, prBranch, repoUrl, baseProject).catch(e => console.error(e));
+                return res.status(200).json({ message: `Processing PR ${action} for ${baseProject.name}` });
+            } else {
+                return res.status(200).json({ message: `Ignored: No base project found for repo ${repoUrl}` });
+            }
+        }
+
+        // Handle Push Events
         const ref = req.body.ref;
         if (!repoUrl || !ref) {
             return res.status(200).send('Ignored: missing repoUrl or ref');
