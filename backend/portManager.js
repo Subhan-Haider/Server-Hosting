@@ -150,5 +150,6 @@ module.exports = {
     getAllProjects,
     getStats,
     updateProjectMeta,
+    loadPortMap,
     RESERVED_PORTS,
 };
