@@ -951,50 +951,109 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
         {liveLogsOpen && (
           <div style={{
             position: 'absolute', inset: 0,
-            background: 'rgba(0,0,0,0.88)', zIndex: 2000,
+            background: 'rgba(0,0,0,0.6)', zIndex: 2000,
             display: 'flex', justifyContent: 'center', alignItems: 'center',
-            backdropFilter: 'blur(6px)', animation: 'fadeIn 0.2s ease'
+            backdropFilter: 'blur(4px)', animation: 'fadeIn 0.2s ease'
           }}>
             <div style={{
-              width: '92%', maxWidth: '900px', height: '82vh',
-              display: 'flex', flexDirection: 'column', background: '#0d1117',
-              border: '1px solid rgba(255,255,255,0.12)', borderRadius: '12px',
-              overflow: 'hidden', boxShadow: '0 25px 80px rgba(0,0,0,0.6)'
+              width: '92%', maxWidth: '1000px', height: '85vh',
+              display: 'flex', flexDirection: 'column', background: '#ffffff',
+              border: '1px solid #eaeaea', borderRadius: '8px',
+              overflow: 'hidden', boxShadow: '0 25px 80px rgba(0,0,0,0.15)',
+              color: '#111'
             }}>
+              {/* Vercel Header */}
               <div style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '14px 20px', background: 'rgba(255,255,255,0.04)',
-                borderBottom: '1px solid rgba(255,255,255,0.08)'
+                padding: '16px 20px', borderBottom: '1px solid #eaeaea', background: '#fafafa'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  {!liveLogsDone
-                    ? <Activity size={18} color="var(--accent-color)" className="animate-spin" />
-                    : liveLogs.includes('❌') ? <span style={{ fontSize: '1.1rem' }}>❌</span> : <span style={{ fontSize: '1.1rem' }}>✅</span>}
-                  <span style={{ fontWeight: '600', fontSize: '0.95rem', color: '#e6edf3' }}>
-                    {liveLogsDone ? 'Build Complete' : `Deploying ${app.name}…`}
-                  </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', fontWeight: 600 }}>
+                  <ChevronDown size={16} color="#666" />
+                  Build Logs
                 </div>
-                {liveLogsDone && (
-                  <button onClick={() => setLiveLogsOpen(false)} style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', color: '#8b949e', cursor: 'pointer', borderRadius: '6px', padding: '4px 12px', fontSize: '0.85rem' }}>
-                    Close
-                  </button>
-                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: '#666' }}>
+                    {liveLogsDone ? '12s' : 'Building...'}
+                    <div style={{
+                      width: '18px', height: '18px', borderRadius: '50%',
+                      background: liveLogsDone ? '#0070f3' : '#ccc', color: '#fff',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    }}>
+                      {liveLogsDone ? <Check size={12} strokeWidth={3} /> : <Activity size={10} className="animate-spin" />}
+                    </div>
+                  </div>
+                  {liveLogsDone && (
+                    <button onClick={() => setLiveLogsOpen(false)} style={{
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      padding: '4px', color: '#666', display: 'flex'
+                    }}>
+                      <X size={18} />
+                    </button>
+                  )}
+                </div>
               </div>
-              <pre ref={liveLogsRef} style={{
-                flex: 1, margin: 0, padding: '18px 20px', overflowY: 'auto',
-                fontFamily: '"Fira Code", monospace', fontSize: '0.82rem', lineHeight: '1.6',
-                color: '#c9d1d9', whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'transparent'
+
+              {/* Vercel Toolbar */}
+              <div style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '8px 16px', borderBottom: '1px solid #eaeaea', background: '#fff'
               }}>
-                {liveLogs.split('\n').map((line, i) => {
-                  let color = '#c9d1d9';
-                  if (/error|fail|❌/i.test(line)) color = '#ff7b7b';
-                  else if (/warn/i.test(line)) color = '#ffa657';
-                  else if (/✅|success|done|complete/i.test(line)) color = '#3fb950';
-                  else if (/^>|cloning|starting|updating|copying|building|installing/i.test(line.trim())) color = '#79c0ff';
-                  return <span key={i} style={{ color, display: 'block' }}>{line}</span>;
-                })}
-                {!liveLogsDone && <span style={{ display: 'inline-block', width: '8px', height: '14px', background: 'var(--accent-color)', marginLeft: '2px', animation: 'blink 1s step-end infinite', verticalAlign: 'text-bottom' }} />}
-              </pre>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: '#666' }}>
+                  <Copy size={14} style={{ cursor: 'pointer' }} onClick={() => navigator.clipboard.writeText(liveLogs)} />
+                  {liveLogs.split('\n').filter(l => l.trim()).length} lines
+                </div>
+                <div style={{
+                  display: 'flex', alignItems: 'center', background: '#fff',
+                  border: '1px solid #eaeaea', borderRadius: '6px', padding: '4px 10px',
+                  width: '240px'
+                }}>
+                  <Search size={14} color="#999" />
+                  <input
+                    type="text"
+                    placeholder="Find in logs"
+                    style={{ border: 'none', outline: 'none', marginLeft: '8px', fontSize: '0.8rem', width: '100%', background: 'transparent', color: '#111' }}
+                  />
+                  <span style={{ fontSize: '0.7rem', color: '#999', background: '#fafafa', padding: '2px 4px', borderRadius: '4px', border: '1px solid #eaeaea' }}>CtrlF</span>
+                </div>
+              </div>
+
+              {/* Vercel Terminal Output */}
+              <div style={{ flex: 1, overflowY: 'auto', background: '#fff', padding: '16px 0' }} ref={liveLogsRef}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: '"Menlo", "Consolas", monospace', fontSize: '0.8rem', lineHeight: '1.6' }}>
+                  <tbody>
+                    {liveLogs.split('\n').map((line, i) => {
+                      if (!line.trim()) return null;
+                      
+                      let color = '#333';
+                      if (/error|fail|❌/i.test(line)) color = '#e00';
+                      else if (/warn/i.test(line)) color = '#f5a623';
+                      else if (/✅|success|done|complete|✓/i.test(line)) color = '#0070f3';
+                      else if (/built in/i.test(line)) color = '#10b981'; // green for 'built in'
+                      
+                      // Fake timestamp just to mimic Vercel logs if line doesn't have one
+                      const now = new Date();
+                      const ts = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}.${String(now.getMilliseconds()).padStart(3, '0')}`;
+                      
+                      return (
+                        <tr key={i} style={{ display: 'flex', padding: '0 20px' }}>
+                          <td style={{ color: '#999', paddingRight: '20px', userSelect: 'none', width: '100px', flexShrink: 0 }}>
+                            {ts}
+                          </td>
+                          <td style={{ color, wordBreak: 'break-word', flex: 1, whiteSpace: 'pre-wrap' }}>
+                            {line}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {!liveLogsDone && (
+                      <tr style={{ display: 'flex', padding: '0 20px' }}>
+                        <td style={{ color: '#999', paddingRight: '20px', width: '100px', flexShrink: 0 }}></td>
+                        <td><span style={{ display: 'inline-block', width: '8px', height: '14px', background: '#ccc', animation: 'blink 1s step-end infinite', verticalAlign: 'text-bottom' }} /></td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -1007,6 +1066,7 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
 // ── Vercel-style compact project card ──────────────────────────────────────
 function ProjectCard({ app, onAction }) {
   const [showDetail, setShowDetail] = useState(false);
+  const [imgError, setImgError] = useState(false);
 
   // Generate a deterministic color from the app name
   const colors = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#84cc16'];
@@ -1043,14 +1103,26 @@ function ProjectCard({ app, onAction }) {
         {/* Header: avatar + name + status */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '14px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
-            {/* Colored avatar */}
-            <div style={{
-              width: '36px', height: '36px', borderRadius: '8px', flexShrink: 0,
-              background: color, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontWeight: '700', fontSize: '1rem', color: 'white', letterSpacing: '-0.01em'
-            }}>
-              {initial}
-            </div>
+            {/* Project Logo / Avatar */}
+            {(!imgError && app.domain) ? (
+              <img 
+                src={`https://www.google.com/s2/favicons?domain=${app.domain}&sz=64`} 
+                alt={app.name}
+                onError={() => setImgError(true)}
+                style={{
+                  width: '36px', height: '36px', borderRadius: '8px', flexShrink: 0,
+                  background: 'rgba(255,255,255,0.1)', objectFit: 'contain', padding: '2px'
+                }}
+              />
+            ) : (
+              <div style={{
+                width: '36px', height: '36px', borderRadius: '8px', flexShrink: 0,
+                background: color, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontWeight: '700', fontSize: '1rem', color: 'white', letterSpacing: '-0.01em'
+              }}>
+                {initial}
+              </div>
+            )}
             <div style={{ minWidth: 0 }}>
               <div style={{ fontWeight: '600', fontSize: '0.95rem', color: '#f0f4f8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 {app.name}
