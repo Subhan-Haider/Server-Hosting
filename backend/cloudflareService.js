@@ -55,7 +55,12 @@ function updateCloudflareConfig(domain, port) {
                 }
                 
                 // Write back
-                const newYaml = yaml.stringify(configObj);
+                let newYaml = yaml.stringify(configObj);
+                
+                // Add blank lines before each list item for better readability
+                newYaml = newYaml.replace(/\n\s*-\s*hostname:/g, '\n\n  - hostname:');
+                newYaml = newYaml.replace(/\n\s*-\s*service:/g, '\n\n  - service:');
+                
                 fs.writeFileSync(CONFIG_PATH, newYaml);
             } else {
                 // Fallback: Text Append
