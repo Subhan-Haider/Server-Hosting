@@ -104,9 +104,25 @@ function detectFramework(projectPath) {
     }
 }
 
-async function cloneAndSetup(repoUrl, pat, projectName, branch = 'main', userInstallCmd, userBuildCmd, userStartCmd) {
+function cleanRepoUrl(url) {
+    try {
+        const urlObj = new URL(url);
+        const parts = urlObj.pathname.split('/').filter(Boolean);
+        if ((urlObj.hostname.includes('github.com') || urlObj.hostname.includes('gitlab.com')) && parts.length >= 2) {
+            let repo = parts[1];
+            if (repo.endsWith('.git')) repo = repo.slice(0, -4);
+            return `${urlObj.protocol}//${urlObj.host}/${parts[0]}/${repo}`;
+        }
+    } catch (e) {
+        // ignore
+    }
+    return url;
+}
+
+async function cloneAndSetup(rawRepoUrl, pat, projectName, branch = 'main', userInstallCmd, userBuildCmd, userStartCmd) {
     ensureProjectsDir();
 
+    const repoUrl = cleanRepoUrl(rawRepoUrl);
     const finalProjectName = projectName || extractProjectNameFromUrl(repoUrl);
     const projectPath = path.join(PROJECTS_DIR, finalProjectName);
     const authUrl = getAuthRepoUrl(repoUrl, pat);

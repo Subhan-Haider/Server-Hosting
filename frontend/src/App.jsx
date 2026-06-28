@@ -56,6 +56,24 @@ function App() {
     }
   };
 
+  const handleGithubUrlChange = (e) => {
+    const url = e.target.value;
+    let branch = formData.branch; // keep current by default
+    try {
+      const urlObj = new URL(url);
+      if (urlObj.hostname.includes('github.com') || urlObj.hostname.includes('gitlab.com')) {
+        const parts = urlObj.pathname.split('/').filter(Boolean);
+        // Path looks like /username/repo/tree/branch-name/... or /blob/branch-name/...
+        if (parts.length >= 4 && (parts[2] === 'tree' || parts[2] === 'blob')) {
+          branch = parts[3];
+        }
+      }
+    } catch (err) {
+      // ignore invalid URLs while typing
+    }
+    setFormData({ ...formData, githubUrl: url, branch });
+  };
+
   return (
     <div className="container animate-fade-in">
       <div className="header">
@@ -98,7 +116,7 @@ function App() {
                       type="url" 
                       placeholder="https://github.com/user/repo" 
                       value={formData.githubUrl} 
-                      onChange={e => setFormData({...formData, githubUrl: e.target.value})} 
+                      onChange={handleGithubUrlChange} 
                       style={{ paddingLeft: '40px' }}
                       required
                     />
