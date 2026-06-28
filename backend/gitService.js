@@ -40,19 +40,48 @@ function extractProjectNameFromUrl(repoUrl) {
     }
 }
 
-function runCommand(command, cwd) {
+const { spawn } = require('child_process');
+
+function runCommand(command, cwd, logger = null) {
     return new Promise((resolve, reject) => {
         const env = {
             ...process.env,
-            GIT_TERMINAL_PROMPT: '0',  // Prevent git from prompting for credentials
-            GIT_ASKPASS: 'echo',       // Return empty string for any credential prompt
+            GIT_TERMINAL_PROMPT: '0',
+            GIT_ASKPASS: 'echo',
         };
-        exec(command, { cwd, env }, (error, stdout, stderr) => {
-            if (error) {
-                console.error(`Error executing ${command}:`, error);
-                reject(error);
+        
+        if (logger) logger(`> ${command}\n`);
+
+        // Use shell: true to support complex commands like "npm run build"
+        const child = spawn(command, { cwd, env, shell: true });
+
+        let stdoutStr = '';
+        let stderrStr = '';
+
+        child.stdout.on('data', (data) => {
+            const text = data.toString();
+            stdoutStr += text;
+            if (logger) logger(text);
+        });
+
+        child.stderr.on('data', (data) => {
+            const text = data.toString();
+            stderrStr += text;
+            if (logger) logger(text);
+        });
+
+        child.on('error', (error) => {
+            if (logger) logger(`ERROR: ${error.message}\n`);
+            reject(error);
+        });
+
+        child.on('close', (code) => {
+            if (code !== 0) {
+                const err = new Error(`Command failed with code ${code}:\n${stderrStr}`);
+                if (logger) logger(`ERROR: Command failed with code ${code}\n`);
+                reject(err);
             } else {
-                resolve({ stdout, stderr });
+                resolve({ stdout: stdoutStr, stderr: stderrStr });
             }
         });
     });
@@ -124,25 +153,27 @@ function cleanRepoUrl(url) {
     return url;
 }
 
-async function cloneAndSetup(rawRepoUrl, pat, projectName, branch = 'main', userInstallCmd, userBuildCmd, userStartCmd) {
+async function cloneAndSetup(rawRepoUrl, pat, projectName, branch = 'main', userInstallCmd, userBuildCmd, userStartCmd, logger = null) {
     ensureProjectsDir();
 
     const repoUrl = cleanRepoUrl(rawRepoUrl);
-    let finalProjectName = projectName || extractProjectNameFromUrl(repoUrl);
-    let projectPath = path.join(PROJECTS_DIR, finalProjectName);
     const authUrl = getAuthRepoUrl(repoUrl, pat);
+    const finalProjectName = projectName || extractProjectNameFromUrl(repoUrl);
+    let projectPath = path.join(PROJECTS_DIR, finalProjectName);
 
-    // If the directory already exists, automatically append a number to make it unique
+    // If directory exists, append a number
     let counter = 1;
-    const baseName = finalProjectName;
     while (fs.existsSync(projectPath)) {
-        finalProjectName = `${baseName}-${counter}`;
+        if (counter === 1) {
+            throw new Error('Project directory already exists. Please use a different name or delete the existing project.');
+        }
         projectPath = path.join(PROJECTS_DIR, finalProjectName);
         counter++;
     }
 
+    if (logger) logger(`Cloning ${repoUrl} (branch: ${branch}) into ${projectPath}...\n`);
     console.log(`Cloning ${repoUrl} (branch: ${branch}) into ${projectPath}...`);
-    await runCommand(`git clone -b ${branch} ${authUrl} ${finalProjectName}`, PROJECTS_DIR);
+    await runCommand(`git clone -b ${branch} ${authUrl} ${finalProjectName}`, PROJECTS_DIR, logger);
 
     // Auto Detect
     const auto = detectFramework(projectPath);
@@ -151,33 +182,74 @@ async function cloneAndSetup(rawRepoUrl, pat, projectName, branch = 'main', user
     const startCmd = userStartCmd !== undefined && userStartCmd !== '' ? userStartCmd : auto.startCmd;
 
     if (installCmd) {
+        if (logger) logger(`Running install command: ${installCmd}\n`);
         console.log(`Running install command: ${installCmd}`);
-        await runCommand(installCmd, projectPath);
+        await runCommand(installCmd, projectPath, logger);
     }
 
     if (buildCmd) {
+        if (logger) logger(`Running build command: ${buildCmd}\n`);
         console.log(`Running build command: ${buildCmd}`);
-        await runCommand(buildCmd, projectPath);
+        await runCommand(buildCmd, projectPath, logger);
     }
 
     // Patch vite.config.js to allow external hosts (Vite 5 security feature)
     patchViteConfig(projectPath);
+
+    // Get current commit hash
+    let commitHash = 'unknown';
+    try {
+        const hashOut = await runCommand('git rev-parse HEAD', projectPath);
+        commitHash = hashOut.trim();
+    } catch (e) {}
 
     return {
         projectName: finalProjectName,
         projectPath,
         installCmd,
         buildCmd,
-        startCmd
+        startCmd,
+        commitHash
     };
 }
 
-async function redeployRepo(projectPath, branch, installCmd, buildCmd) {
+async function redeployRepo(projectPath, branch, installCmd, buildCmd, logger = null) {
+    if (logger) logger(`Redeploying project at ${projectPath}...\n`);
     console.log(`Redeploying project at ${projectPath}...`);
     
     // Git pull latest
-    await runCommand('git fetch', projectPath);
-    await runCommand(`git reset --hard origin/${branch}`, projectPath);
+    await runCommand('git fetch', projectPath, logger);
+    await runCommand(`git reset --hard origin/${branch}`, projectPath, logger);
+
+    if (installCmd) {
+        if (logger) logger(`Running install command: ${installCmd}\n`);
+        console.log(`Running install command: ${installCmd}`);
+        await runCommand(installCmd, projectPath, logger);
+    }
+
+    if (buildCmd) {
+        if (logger) logger(`Running build command: ${buildCmd}\n`);
+        console.log(`Running build command: ${buildCmd}`);
+        await runCommand(buildCmd, projectPath, logger);
+    }
+
+    // Re-patch vite config after redeploy (git reset may have reverted it)
+    patchViteConfig(projectPath);
+
+    let commitHash = 'unknown';
+    try {
+        const hashOut = await runCommand('git rev-parse HEAD', projectPath);
+        commitHash = hashOut.stdout.trim(); // Fixed: use stdout
+    } catch (e) {}
+
+    return commitHash;
+}
+
+async function rollbackRepo(projectPath, commitHash, installCmd, buildCmd) {
+    console.log(`Rolling back project at ${projectPath} to commit ${commitHash}...`);
+    
+    // Git reset to specific commit
+    await runCommand(`git reset --hard ${commitHash}`, projectPath);
 
     if (installCmd) {
         console.log(`Running install command: ${installCmd}`);
@@ -189,8 +261,10 @@ async function redeployRepo(projectPath, branch, installCmd, buildCmd) {
         await runCommand(buildCmd, projectPath);
     }
 
-    // Re-patch vite config after redeploy (git reset may have reverted it)
+    // Re-patch vite config after rollback
     patchViteConfig(projectPath);
+    
+    return commitHash;
 }
 
 /**
@@ -254,6 +328,7 @@ if (__originalConfig && typeof __originalConfig === 'object') {
 module.exports = {
     cloneAndSetup,
     redeployRepo,
+    rollbackRepo,
     patchViteConfig,
     extractProjectNameFromUrl
 };

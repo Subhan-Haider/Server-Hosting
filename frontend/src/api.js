@@ -8,14 +8,80 @@ export const api = {
     return res.json();
   },
 
-  async deployApp(data) {
+  async detectEnv(data) {
+    const response = await fetch(`${API_URL}/env/detect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to detect environment');
+    }
+    return response.json();
+  },
+
+  async getHistory(domain) {
+    const response = await fetch(`${API_URL}/history/${domain}`);
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to get history');
+    }
+    return response.json();
+  },
+
+  async rollback(domain, commit) {
+    const response = await fetch(`${API_URL}/rollback/${domain}/${commit}`, {
+        method: 'POST'
+    });
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to rollback');
+    }
+    return response.json();
+  },
+
+  async deployApp(data, onLog) {
     const res = await fetch(`${API_URL}/deploy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
+    
     if (!res.ok) throw new Error(await res.text());
-    return res.json();
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        
+        // Split by double newline since SSE uses \n\n
+        let parts = buffer.split('\n\n');
+        buffer = parts.pop(); // keep the incomplete part
+
+        for (const part of parts) {
+            if (part.startsWith('data: ')) {
+                const jsonStr = part.substring(6);
+                try {
+                    const parsed = JSON.parse(jsonStr);
+                    if (parsed.type === 'log' && onLog) {
+                        onLog(parsed.message);
+                    } else if (parsed.type === 'error') {
+                        throw new Error(parsed.error);
+                    } else if (parsed.type === 'success') {
+                        return parsed;
+                    }
+                } catch (e) {
+                    // Ignore parse errors from partial JSON
+                }
+            }
+        }
+    }
   },
 
   async actionApp(name, action) {
@@ -29,6 +95,34 @@ export const api = {
   async getLogs(name) {
     const res = await fetch(`${API_URL}/logs/${name}`);
     if (!res.ok) throw new Error('Failed to fetch logs');
+    return res.json();
+  },
+
+  async getSecrets() {
+    const res = await fetch(`${API_URL}/secrets`);
+    if (!res.ok) throw new Error('Failed to fetch secrets');
+    return res.json();
+  },
+
+  async saveSecret(key, value) {
+    const res = await fetch(`${API_URL}/secrets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value })
+    });
+    if (!res.ok) throw new Error('Failed to save secret');
+    return res.json();
+  },
+
+  async deleteSecret(key) {
+    const res = await fetch(`${API_URL}/secrets/${key}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('Failed to delete secret');
+    return res.json();
+  },
+
+  async getCrashes() {
+    const res = await fetch(`${API_URL}/crashes`);
+    if (!res.ok) throw new Error('Failed to fetch crashes');
     return res.json();
   },
 

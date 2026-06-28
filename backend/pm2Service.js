@@ -1,4 +1,5 @@
 const pm2 = require('pm2');
+const path = require('path');
 
 function connect() {
     return new Promise((resolve, reject) => {
@@ -24,7 +25,11 @@ async function startProject(projectName, projectPath, port, startCmd = 'npm star
                           startCmd.includes('preview') ||
                           startCmd.includes('vite');
         
-        const env = { PORT: port };
+        const env = { 
+            PORT: port,
+            APP_NAME: projectName,
+            NODE_OPTIONS: `--require ${path.join(__dirname, 'crash-reporter.js')}`
+        };
         
         if (isViteCmd) {
             // Append --port and --host so Vite binds to the correct port and is network-accessible

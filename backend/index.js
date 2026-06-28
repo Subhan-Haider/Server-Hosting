@@ -6,17 +6,14 @@ const cloudflareService = require('./cloudflareService');
 const gitService = require('./gitService');
 const envService = require('./envService');
 const authService = require('./authService');
+const historyManager = require('./historyManager');
+const secretsManager = require('./secretsManager');
 
 const app = express();
 app.use(cors({
-    origin: [
-        "https://app.subhan.tech",
-        "http://localhost:3000",
-        "http://localhost:5000",
-        "http://localhost:5173",
-        "http://localhost:6004"
-    ],
-    credentials: true
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 
@@ -104,10 +101,21 @@ app.post('/api/env/detect', async (req, res) => {
 });
 
 app.post('/api/deploy', async (req, res) => {
-    const { deployType, name, domain, path, githubUrl, githubPat, branch = 'main', installCmd, buildCmd, startCmd, envVars } = req.body;
+    const { deployType, name, domain, path, githubUrl, githubPat, branch = 'main', installCmd, buildCmd, startCmd, envVars, globalSecretKeys } = req.body;
+    const deployStartTime = Date.now();
     
+    // Set up SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    
+    const logger = (msg) => {
+        res.write(`data: ${JSON.stringify({ type: 'log', message: msg })}\n\n`);
+    };
+
     if (!domain) {
-        return res.status(400).json({ error: 'Domain is required' });
+        res.write(`data: ${JSON.stringify({ type: 'error', error: 'Domain is required' })}\n\n`);
+        return res.end();
     }
     
     try {
@@ -121,28 +129,36 @@ app.post('/api/deploy', async (req, res) => {
             
             // Wait, if /api/env/detect was called, it's already cloned.
             // We should just check if the directory exists and write the env file, then install/build.
-            // For now, let's just write the env file if envVars are provided.
-            if (envVars && path) {
-                envService.writeEnvFile(path, envVars);
-                // Assume already cloned by /api/env/detect, so just run install/build
-                // and skip cloneAndSetup to avoid "already exists" error.
-                // But wait, the previous code doesn't support this cleanly. 
-                // We'll catch the error and run redeploy logic if it exists.
+            // Handle Environment Variables and Global Secrets
+            let finalEnvVars = null;
+            if (envVars || (globalSecretKeys && globalSecretKeys.length > 0)) {
+                finalEnvVars = { ...(envVars || {}) };
+                if (globalSecretKeys && globalSecretKeys.length > 0) {
+                    const rawSecrets = secretsManager.getRawSecrets(globalSecretKeys);
+                    finalEnvVars = { ...finalEnvVars, ...rawSecrets };
+                }
+            }
+
+            if (finalEnvVars && path) {
+                envService.writeEnvFile(path, finalEnvVars);
                 try {
-                    await gitService.cloneAndSetup(githubUrl, githubPat, name, branch, installCmd, buildCmd, startCmd);
+                    const commitHash = await gitService.redeployRepo(path, branch, installCmd, buildCmd, logger);
+                    meta.commitHash = commitHash;
                 } catch (e) {
                     if (e.message.includes('already exists')) {
-                        console.log('Project exists, writing env and running build steps...');
-                        await gitService.redeployRepo(path, branch, installCmd, buildCmd);
+                        logger('Project exists, writing env and running build steps...\n');
+                        const commitHash = await gitService.redeployRepo(path, branch, installCmd, buildCmd, logger);
+                        meta.commitHash = commitHash;
                     } else {
                         throw e;
                     }
                 }
             } else {
-                const setupResult = await gitService.cloneAndSetup(githubUrl, githubPat, name, branch, installCmd, buildCmd, startCmd);
+                const setupResult = await gitService.cloneAndSetup(githubUrl, githubPat, name, branch, installCmd, buildCmd, startCmd, logger);
                 finalPath = setupResult.projectPath;
                 finalName = setupResult.projectName;
                 finalStartCmd = setupResult.startCmd;
+                meta.commitHash = setupResult.commitHash;
             }
             
             meta = {
@@ -151,22 +167,54 @@ app.post('/api/deploy', async (req, res) => {
             };
         } else {
             if (!name || !path) return res.status(400).json({ error: 'Name and path are required' });
-            if (envVars) envService.writeEnvFile(path, envVars);
+            if (envVars || (globalSecretKeys && globalSecretKeys.length > 0)) {
+                let finalEnvVars = { ...(envVars || {}) };
+                if (globalSecretKeys && globalSecretKeys.length > 0) {
+                    const rawSecrets = secretsManager.getRawSecrets(globalSecretKeys);
+                    finalEnvVars = { ...finalEnvVars, ...rawSecrets };
+                }
+                envService.writeEnvFile(path, finalEnvVars);
+            }
             meta.startCmd = finalStartCmd;
         }
         
+        logger('Assigning port...\n');
         const port = await portManager.assignFreePort(finalName, domain, finalPath, meta);
+        
+        logger('Starting PM2 process...\n');
         await pm2Service.startProject(finalName, finalPath, port, finalStartCmd);
+        
+        logger('Updating Cloudflare Tunnel...\n');
         await cloudflareService.updateCloudflareConfig(domain, port);
         
-        res.json({ message: 'Project deployed successfully', name: finalName, port, domain });
+        historyManager.logDeployment(domain, {
+            status: 'success',
+            commitHash: meta.commitHash,
+            durationMs: Date.now() - deployStartTime,
+            type: 'deploy'
+        });
+
+        logger(`Deployment successful! Domain: ${domain}, Port: ${port}\n`);
+        res.write(`data: ${JSON.stringify({ type: 'success', name: finalName, port, domain })}\n\n`);
+        res.end();
     } catch (err) {
         console.error('Deployment error:', err);
-        res.status(500).json({ error: err.message });
+        logger(`Deployment error: ${err.message}\n`);
+        if (domain) {
+            historyManager.logDeployment(domain, {
+                status: 'error',
+                error: err.message,
+                durationMs: Date.now() - deployStartTime,
+                type: 'deploy'
+            });
+        }
+        res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
+        res.end();
     }
 });
 
 app.post('/api/redeploy/:name', async (req, res) => {
+    const deployStartTime = Date.now();
     try {
         const { name } = req.params;
         const project = portManager.getProjectDetails(name);
@@ -178,14 +226,32 @@ app.post('/api/redeploy/:name', async (req, res) => {
         await pm2Service.stopProject(name).catch(() => {});
         
         // Redeploy repo (git fetch, reset, install, build)
-        await gitService.redeployRepo(project.path, project.branch || 'main', project.installCmd, project.buildCmd);
+        const commitHash = await gitService.redeployRepo(project.path, project.branch || 'main', project.installCmd, project.buildCmd);
         
         // Start PM2 process again
         await pm2Service.startProject(name, project.path, project.port, project.startCmd);
         
+        historyManager.logDeployment(project.domain, {
+            status: 'success',
+            commitHash,
+            durationMs: Date.now() - deployStartTime,
+            type: 'redeploy'
+        });
+
         res.json({ message: 'Redeployed successfully' });
     } catch (err) {
         console.error('Redeploy error:', err);
+        if (req.params.name) {
+            const project = portManager.getProjectDetails(req.params.name);
+            if (project) {
+                historyManager.logDeployment(project.domain, {
+                    status: 'error',
+                    error: err.message,
+                    durationMs: Date.now() - deployStartTime,
+                    type: 'redeploy'
+                });
+            }
+        }
         res.status(500).json({ error: err.message });
     }
 });
@@ -224,21 +290,167 @@ app.post('/api/restart/:name', async (req, res) => {
     }
 });
 
-app.delete('/api/delete/:name', async (req, res) => {
+app.delete('/api/projects/:name', async (req, res) => {
     try {
         const { name } = req.params;
         const project = portManager.getProjectDetails(name);
         
-        if (project) {
-            await pm2Service.deleteProject(name).catch(() => {}); // ignore error if not in pm2
+        await pm2Service.stopProject(name).catch(() => {});
+        await pm2Service.deleteProject(name).catch(() => {});
+        
+        if (project && project.domain) {
             await cloudflareService.removeCloudflareConfig(project.domain);
-            portManager.removeProject(name);
+            historyManager.deleteHistory(project.domain);
         }
         
-        res.json({ message: 'Deleted' });
+        portManager.removeProject(name);
+        res.json({ message: 'Project removed' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+// --- History & Rollback Endpoints ---
+app.get('/api/history/:domain', (req, res) => {
+    try {
+        const history = historyManager.getHistory(req.params.domain);
+        res.json(history);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/rollback/:domain/:commit', async (req, res) => {
+    try {
+        const { domain, commit } = req.params;
+        const project = portManager.getProjectByDomain(domain);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        
+        const startTime = Date.now();
+        await pm2Service.stopProject(project.name).catch(() => {});
+        
+        await gitService.rollbackRepo(project.path, commit, project.installCmd, project.buildCmd);
+        await pm2Service.startProject(project.name, project.path, project.port, project.startCmd);
+        
+        historyManager.logDeployment(domain, {
+            status: 'success',
+            commitHash: commit,
+            durationMs: Date.now() - startTime,
+            type: 'rollback'
+        });
+        
+        res.json({ message: 'Rolled back successfully' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- GitHub Webhook Endpoint ---
+app.post('/api/webhook/github', async (req, res) => {
+    try {
+        // GitHub sends repository.html_url or clone_url
+        const repoUrl = req.body.repository?.html_url || req.body.repository?.clone_url;
+        // Ref is like "refs/heads/main"
+        const ref = req.body.ref;
+        if (!repoUrl || !ref) {
+            return res.status(200).send('Ignored: missing repoUrl or ref');
+        }
+
+        const branch = ref.replace('refs/heads/', '');
+        const allProjects = portManager.getAllProjects();
+        const entries = Object.values(allProjects);
+
+        let triggered = 0;
+        for (const project of entries) {
+            if (project.deployType === 'github' && project.githubUrl) {
+                // simple check if URL matches (ignoring trailing .git)
+                const url1 = project.githubUrl.replace(/\.git$/, '').toLowerCase();
+                const url2 = repoUrl.replace(/\.git$/, '').toLowerCase();
+                
+                if (url1 === url2 && (project.branch === branch || !project.branch && branch === 'main')) {
+                    // Match found! Trigger redeploy in background
+                    console.log(`[Webhook] Auto-redeploying ${project.name} due to push on ${branch}`);
+                    triggered++;
+                    
+                    const startTime = Date.now();
+                    (async () => {
+                        try {
+                            await pm2Service.stopProject(project.name).catch(() => {});
+                            const commitHash = await gitService.redeployRepo(project.path, branch, project.installCmd, project.buildCmd);
+                            await pm2Service.startProject(project.name, project.path, project.port, project.startCmd);
+                            historyManager.logDeployment(project.domain, {
+                                status: 'success',
+                                commitHash,
+                                durationMs: Date.now() - startTime,
+                                type: 'webhook-redeploy'
+                            });
+                        } catch (err) {
+                            console.error(`[Webhook] Failed to redeploy ${project.name}:`, err);
+                            historyManager.logDeployment(project.domain, {
+                                status: 'error',
+                                error: err.message,
+                                durationMs: Date.now() - startTime,
+                                type: 'webhook-redeploy'
+                            });
+                        }
+                    })();
+                }
+            }
+        }
+
+        res.status(200).json({ message: `Triggered ${triggered} redeployments` });
+    } catch (err) {
+        console.error('[Webhook] Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- Secrets Vault Endpoints ---
+app.get('/api/secrets', (req, res) => {
+    try {
+        const maskedSecrets = secretsManager.getSecrets(true);
+        res.json(maskedSecrets);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/secrets', (req, res) => {
+    try {
+        const { key, value } = req.body;
+        if (!key || !value) return res.status(400).json({ error: 'Key and value required' });
+        secretsManager.setSecret(key, value);
+        res.json({ message: 'Secret saved successfully' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/secrets/:key', (req, res) => {
+    try {
+        secretsManager.deleteSecret(req.params.key);
+        res.json({ message: 'Secret deleted' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- Crash Reporting Endpoints ---
+app.post('/api/report-crash', (req, res) => {
+    try {
+        const crash = req.body;
+        crash.id = Date.now().toString();
+        crashStore.unshift(crash);
+        if (crashStore.length > 50) crashStore.pop(); // Keep only last 50
+        console.log(`[Crash Alert] ${crash.appName} crashed: ${crash.message}`);
+        res.status(200).json({ message: 'Crash reported' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/crashes', (req, res) => {
+    res.json(crashStore);
 });
 
 app.get('/api/logs/:name', async (req, res) => {

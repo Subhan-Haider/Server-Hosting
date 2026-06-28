@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
-import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings, ExternalLink, Code2, LogOut, CheckCircle } from 'lucide-react';
+import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings, ExternalLink, Code2, LogOut, CheckCircle, Bell, Key } from 'lucide-react';
 import { api } from './api';
 
 function App() {
   const [apps, setApps] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deploying, setDeploying] = useState(false);
+  const [deployLogs, setDeployLogs] = useState('');
   const [deployType, setDeployType] = useState('local');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [useCustomDomain, setUseCustomDomain] = useState(false);
   const [availableBranches, setAvailableBranches] = useState([]);
   const [fetchingBranches, setFetchingBranches] = useState(false);
   const [envVars, setEnvVars] = useState([{ key: '', value: '' }]);
@@ -16,6 +18,14 @@ function App() {
     try { return JSON.parse(localStorage.getItem('gh_user') || 'null'); } catch { return null; }
   });
   const [showGithubConnect, setShowGithubConnect] = useState(false);
+
+  const [globalSecrets, setGlobalSecrets] = useState({});
+  const [showSecretsVault, setShowSecretsVault] = useState(false);
+  const [selectedSecrets, setSelectedSecrets] = useState([]);
+
+  const [crashes, setCrashes] = useState([]);
+  const [showCrashes, setShowCrashes] = useState(false);
+
   const [formData, setFormData] = useState({ 
     name: '', 
     path: '', 
@@ -39,15 +49,35 @@ function App() {
     }
   };
 
+  const fetchSecrets = async () => {
+    try {
+      const data = await api.getSecrets();
+      setGlobalSecrets(data);
+    } catch (e) {}
+  };
+
+  const fetchCrashes = async () => {
+    try {
+      const data = await api.getCrashes();
+      setCrashes(data);
+    } catch (e) {}
+  };
+
   useEffect(() => {
     fetchApps();
-    const interval = setInterval(fetchApps, 5000); // Poll every 5s
+    fetchSecrets();
+    fetchCrashes();
+    const interval = setInterval(() => {
+      fetchApps();
+      fetchCrashes();
+    }, 5000); // Poll every 5s
     return () => clearInterval(interval);
   }, []);
 
   const handleDeploy = async (e) => {
     e.preventDefault();
     setDeploying(true);
+    setDeployLogs('Starting deployment process...\n');
     try {
       // Convert envVars array to object, filtering empty keys
       const envVarsObj = {};
@@ -56,7 +86,16 @@ function App() {
       });
       // Use connected GitHub token as PAT if no manual PAT is entered
       const effectivePat = formData.githubPat || githubToken || undefined;
-      await api.deployApp({ ...formData, githubPat: effectivePat, deployType, envVars: Object.keys(envVarsObj).length > 0 ? envVarsObj : undefined });
+      await api.deployApp(
+        { 
+          ...formData, 
+          githubPat: effectivePat, 
+          deployType, 
+          envVars: Object.keys(envVarsObj).length > 0 ? envVarsObj : undefined,
+          globalSecretKeys: selectedSecrets.length > 0 ? selectedSecrets : undefined
+        },
+        (msg) => setDeployLogs(prev => prev + msg)
+      );
       setFormData({ 
         name: '', path: '', domain: '', 
         githubUrl: '', githubPat: '', branch: 'main',
@@ -69,6 +108,8 @@ function App() {
       alert('Error deploying app: ' + err.message);
     } finally {
       setDeploying(false);
+      // Keep logs visible for a couple seconds on success/failure, then clear
+      setTimeout(() => setDeployLogs(''), 3000);
     }
   };
 
@@ -89,7 +130,9 @@ function App() {
         // Auto-fill name and domain from repo name
         if (repo) {
           autoName = repo;
-          autoDomain = `${repo.toLowerCase().replace(/[^a-z0-9-]/g, '')}.subhan.tech`;
+          if (!useCustomDomain) {
+            autoDomain = `${repo.toLowerCase().replace(/[^a-z0-9-]/g, '')}.subhan.tech`;
+          }
         }
 
         // Extract branch from URL if present
@@ -135,7 +178,21 @@ function App() {
           <h1>Auto Deployment Platform</h1>
           <p>Your self-hosted Vercel alternative for lightning fast deployments</p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          
+          <button className="btn btn-secondary" onClick={() => setShowCrashes(true)} style={{ position: 'relative', padding: '8px' }} title="Crash Reports">
+            <Bell size={18} />
+            {crashes.length > 0 && (
+              <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: 'var(--error-color)', color: 'white', borderRadius: '50%', width: '18px', height: '18px', fontSize: '0.7rem', display: 'flex', justifyContent: 'center', alignItems: 'center', fontWeight: 'bold' }}>
+                {crashes.length}
+              </span>
+            )}
+          </button>
+
+          <button className="btn btn-secondary" onClick={() => setShowSecretsVault(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px' }} title="Secrets Vault">
+            <Key size={16} /> Secrets
+          </button>
+
           {githubUser ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.07)', padding: '6px 12px', borderRadius: '20px' }}>
               <img src={githubUser.avatar_url} alt="avatar" style={{ width: '24px', height: '24px', borderRadius: '50%' }} />
@@ -248,11 +305,11 @@ function App() {
                   onChange={e => {
                     const newName = e.target.value;
                     const cleanName = newName.toLowerCase().replace(/[^a-z0-9-]/g, '');
-                    setFormData({
-                      ...formData, 
+                    setFormData(prev => ({
+                      ...prev, 
                       name: newName,
-                      domain: cleanName ? `${cleanName}.subhan.tech` : ''
-                    });
+                      domain: !useCustomDomain && cleanName ? `${cleanName}.subhan.tech` : prev.domain
+                    }));
                   }} 
                   style={{ paddingLeft: '40px' }}
                   required={deployType === 'local'}
@@ -278,7 +335,18 @@ function App() {
             )}
             
             <div className="form-group">
-              <label>Domain</label>
+              <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>Domain</span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer', margin: 0, color: useCustomDomain ? 'var(--accent-color)' : 'var(--text-secondary)' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={useCustomDomain}
+                    onChange={(e) => setUseCustomDomain(e.target.checked)}
+                    style={{ width: 'auto', margin: 0 }}
+                  />
+                  Use Custom Domain
+                </label>
+              </label>
               <div style={{ position: 'relative' }}>
                 <Globe size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--text-secondary)' }} />
                 <input 
@@ -369,6 +437,24 @@ function App() {
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button
                         type="button"
+                        onClick={() => {
+                          const content = envVars
+                            .filter(ev => ev.key.trim())
+                            .map(ev => `${ev.key}=${ev.value}`)
+                            .join('\n');
+                          const blob = new Blob([content], { type: 'text/plain' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = '.env';
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        style={{ fontSize: '0.75rem', padding: '2px 8px', background: 'rgba(255,255,255,0.1)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '4px', cursor: 'pointer' }}
+                        title="Download .env file"
+                      >📥 Export</button>
+                      <button
+                        type="button"
                         onClick={async () => {
                           try {
                             const text = await navigator.clipboard.readText();
@@ -381,7 +467,6 @@ function App() {
                                 const splitIdx = trimmed.indexOf('=');
                                 const key = trimmed.substring(0, splitIdx).trim();
                                 let value = trimmed.substring(splitIdx + 1).trim();
-                                // Remove surrounding quotes if present
                                 if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
                                   value = value.substring(1, value.length - 1);
                                 }
@@ -395,12 +480,12 @@ function App() {
                               });
                             }
                           } catch (err) {
-                            alert('Clipboard access denied. Please allow clipboard permissions to use Smart Paste.');
+                            alert('Clipboard access denied. Please allow clipboard permissions to use Import.');
                           }
                         }}
                         style={{ fontSize: '0.75rem', padding: '2px 8px', background: 'rgba(255,255,255,0.1)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '4px', cursor: 'pointer' }}
                         title="Copy your .env file contents and click this to auto-fill"
-                      >📋 Smart Paste</button>
+                      >📋 Import</button>
                       <button
                         type="button"
                         onClick={() => setEnvVars([...envVars, { key: '', value: '' }])}
@@ -444,6 +529,33 @@ function App() {
                   </div>
                   <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '6px' }}>These will be written to <code>.env.local</code> in your project before startup.</p>
                 </div>
+                  {Object.keys(globalSecrets).length > 0 && (
+                    <div className="form-group" style={{ marginTop: '16px' }}>
+                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>🌐 Inject Global Secrets</span>
+                      </label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px', padding: '12px', background: 'rgba(0,0,0,0.3)', borderRadius: '8px' }}>
+                        {Object.entries(globalSecrets).map(([key, masked]) => (
+                          <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', margin: 0, fontWeight: 'normal' }}>
+                            <input
+                              type="checkbox"
+                              checked={selectedSecrets.includes(key)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedSecrets([...selectedSecrets, key]);
+                                } else {
+                                  setSelectedSecrets(selectedSecrets.filter(k => k !== key));
+                                }
+                              }}
+                              style={{ width: 'auto', marginBottom: 0 }}
+                            />
+                            <span style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.85rem' }}>{key}</span>
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', fontFamily: 'monospace' }}>{masked}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
               </div>
             )}
 
@@ -470,12 +582,149 @@ function App() {
           ))
         )}
       </div>
+
+      {/* Deployment Logs Modal overlay */}
+      {(deploying || deployLogs) && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', zIndex: 1000,
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          backdropFilter: 'blur(5px)'
+        }}>
+          <div className="glass-panel" style={{ width: '90%', maxWidth: '800px', height: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2>Deployment In Progress</h2>
+              {deploying ? <Activity className="animate-spin" size={24} color="var(--accent-color)" /> : <button onClick={() => setDeployLogs('')} className="btn btn-secondary">Close</button>}
+            </div>
+            <pre style={{ 
+              flex: 1, 
+              background: '#0d1117', 
+              color: '#c9d1d9', 
+              padding: '16px', 
+              borderRadius: '8px', 
+              overflowY: 'auto',
+              fontFamily: 'monospace',
+              fontSize: '0.85rem',
+              margin: 0,
+              whiteSpace: 'pre-wrap'
+            }}>
+              {deployLogs}
+            </pre>
+          </div>
+        </div>
+      )}
+
+      {/* Secrets Vault Modal */}
+      {showSecretsVault && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', zIndex: 1000,
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          backdropFilter: 'blur(5px)'
+        }}>
+          <div className="glass-panel" style={{ width: '90%', maxWidth: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2><Key size={20} style={{display: 'inline', verticalAlign: 'text-bottom'}}/> Secrets Vault</h2>
+              <button onClick={() => setShowSecretsVault(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.2rem' }}>✕</button>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+              Define global API keys and secrets here. You can inject these into any deployed app. Values are masked for security.
+            </p>
+            
+            <div style={{ flex: 1, overflowY: 'auto', marginBottom: '16px' }}>
+              {Object.keys(globalSecrets).length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>No global secrets defined yet.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {Object.entries(globalSecrets).map(([key, value]) => (
+                    <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '8px' }}>
+                      <div style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>{key}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{value}</div>
+                        <button onClick={async () => {
+                          if (confirm(`Delete secret ${key}?`)) {
+                            await api.deleteSecret(key);
+                            fetchSecrets();
+                          }
+                        }} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: 0 }} title="Delete Secret">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const key = e.target.elements.key.value.trim();
+              const val = e.target.elements.val.value.trim();
+              if (key && val) {
+                await api.saveSecret(key, val);
+                e.target.reset();
+                fetchSecrets();
+              }
+            }} style={{ display: 'flex', gap: '8px' }}>
+              <input name="key" type="text" placeholder="KEY_NAME" required style={{ flex: 1, fontFamily: 'monospace' }} />
+              <input name="val" type="password" placeholder="Value" required style={{ flex: 2, fontFamily: 'monospace' }} />
+              <button type="submit" className="btn btn-primary" style={{ padding: '8px 16px' }}>Add</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Crashes Modal */}
+      {showCrashes && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.8)', zIndex: 1000,
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          backdropFilter: 'blur(5px)'
+        }}>
+          <div className="glass-panel" style={{ width: '90%', maxWidth: '800px', height: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2><Bell size={20} style={{display: 'inline', verticalAlign: 'text-bottom'}}/> Crash Reports</h2>
+              <button onClick={() => setShowCrashes(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.2rem' }}>✕</button>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+              Recent fatal errors and unhandled rejections from your Node.js apps.
+            </p>
+
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {crashes.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>No crashes recorded! 🎉</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {crashes.map((crash) => (
+                    <div key={crash.id} style={{ background: 'rgba(255,0,0,0.1)', border: '1px solid rgba(255,0,0,0.3)', borderRadius: '8px', padding: '12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontWeight: 'bold', color: 'var(--error-color)' }}>{crash.appName}</span>
+                          <span style={{ fontSize: '0.8rem', background: 'rgba(255,255,255,0.1)', padding: '2px 6px', borderRadius: '4px' }}>{crash.type}</span>
+                        </div>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(crash.timestamp).toLocaleString()}</span>
+                      </div>
+                      <div style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: '#ff7b7b', marginBottom: '8px' }}>{crash.message}</div>
+                      <pre style={{ background: 'rgba(0,0,0,0.4)', padding: '8px', borderRadius: '4px', fontSize: '0.75rem', overflowX: 'auto', margin: 0, color: '#c9d1d9' }}>
+                        {crash.stack}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function AppCard({ app, onAction, delay }) {
   const [logs, setLogs] = useState(null);
+  const [history, setHistory] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
 
   const handleAction = async (action) => {
@@ -504,6 +753,35 @@ function AppCard({ app, onAction, delay }) {
       } catch (err) {
         alert('Failed to get logs');
       }
+    }
+  };
+
+  const toggleHistory = async () => {
+    if (showHistory) {
+      setShowHistory(false);
+    } else {
+      try {
+        const data = await api.getHistory(app.domain);
+        setHistory(data);
+        setShowHistory(true);
+      } catch (err) {
+        alert('Failed to get history: ' + err.message);
+      }
+    }
+  };
+
+  const handleRollback = async (commit) => {
+    if (!confirm(`Are you sure you want to rollback to commit ${commit}?`)) return;
+    setLoadingAction(true);
+    try {
+      await api.rollback(app.domain, commit);
+      alert('Rollback successful!');
+      onAction();
+      toggleHistory(); // close modal
+    } catch (err) {
+      alert('Rollback failed: ' + err.message);
+    } finally {
+      setLoadingAction(false);
     }
   };
 
@@ -570,6 +848,11 @@ function AppCard({ app, onAction, delay }) {
         <button className="btn btn-secondary" onClick={toggleLogs}>
           <Terminal size={16} /> Logs
         </button>
+        {app.deployType === 'github' && (
+          <button className="btn btn-secondary" onClick={toggleHistory} disabled={loadingAction}>
+            <Activity size={16} /> History
+          </button>
+        )}
         <button className="btn btn-danger" onClick={() => {
           if (confirm(`Are you sure you want to delete ${app.name}?`)) handleAction('delete');
         }} disabled={loadingAction}>
@@ -587,6 +870,53 @@ function AppCard({ app, onAction, delay }) {
               <pre style={{ color: 'var(--danger)' }}>{logs.err}</pre>
             </>
           )}
+        </div>
+      )}
+
+      {showHistory && history && (
+        <div className="logs-container" style={{ marginTop: '16px' }}>
+          <div className="logs-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Deployment History</span>
+            <button onClick={() => setShowHistory(false)} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}>✕</button>
+          </div>
+          <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {history.length === 0 ? (
+              <p style={{ color: 'var(--text-secondary)' }}>No history available.</p>
+            ) : (
+              history.map((record) => (
+                <div key={record.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '8px' }}>
+                  <div>
+                    <div style={{ fontSize: '0.9rem', fontWeight: 500, color: record.status === 'success' ? 'var(--success)' : 'var(--danger)' }}>
+                      {record.type.toUpperCase()} - {record.status.toUpperCase()}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                      {new Date(record.timestamp).toLocaleString()} • {Math.round(record.durationMs / 1000)}s
+                    </div>
+                    {record.commitHash && (
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px', fontFamily: 'monospace' }}>
+                        Commit: {record.commitHash.substring(0, 7)}
+                      </div>
+                    )}
+                    {record.error && (
+                      <div style={{ fontSize: '0.8rem', color: 'var(--danger)', marginTop: '4px' }}>
+                        {record.error}
+                      </div>
+                    )}
+                  </div>
+                  {record.commitHash && record.commitHash !== 'unknown' && record.status === 'success' && (
+                    <button 
+                      onClick={() => handleRollback(record.commitHash)}
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                      disabled={loadingAction}
+                    >
+                      <RotateCw size={14} style={{ marginRight: '4px' }} /> Rollback
+                    </button>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
     </div>
