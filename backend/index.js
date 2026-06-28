@@ -13,6 +13,17 @@ app.use(express.json());
 
 // Endpoints
 
+app.get('/', (req, res) => {
+  res.json({
+    status: "Server Hosting API running",
+    routes: "/api/apps, /api/deploy, /api/logs"
+  });
+});
+
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', port: process.env.PORT || 4000 });
+});
+
 app.get('/api/apps', async (req, res) => {
     try {
         const pm2Apps = await pm2Service.listProjects();
@@ -235,6 +246,6 @@ app.get('/api/logs/:name', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`Backend server running on port ${PORT}`);
 });
