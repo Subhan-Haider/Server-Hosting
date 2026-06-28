@@ -8,6 +8,8 @@ function App() {
   const [deploying, setDeploying] = useState(false);
   const [deployType, setDeployType] = useState('local'); // 'local' or 'github'
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [availableBranches, setAvailableBranches] = useState([]);
+  const [fetchingBranches, setFetchingBranches] = useState(false);
   const [formData, setFormData] = useState({ 
     name: '', 
     path: '', 
@@ -56,22 +58,59 @@ function App() {
     }
   };
 
-  const handleGithubUrlChange = (e) => {
+  const handleGithubUrlChange = async (e) => {
     const url = e.target.value;
-    let branch = formData.branch; // keep current by default
+    let branch = formData.branch;
+    let autoName = formData.name;
+    let autoDomain = formData.domain;
+    setAvailableBranches([]);
+
     try {
       const urlObj = new URL(url);
-      if (urlObj.hostname.includes('github.com') || urlObj.hostname.includes('gitlab.com')) {
+      if (urlObj.hostname.includes('github.com')) {
         const parts = urlObj.pathname.split('/').filter(Boolean);
-        // Path looks like /username/repo/tree/branch-name/... or /blob/branch-name/...
+        const owner = parts[0];
+        const repo = parts[1]?.replace(/\.git$/, '');
+
+        // Auto-fill name and domain from repo name
+        if (repo) {
+          autoName = repo;
+          autoDomain = `${repo.toLowerCase().replace(/[^a-z0-9-]/g, '')}.subhan.tech`;
+        }
+
+        // Extract branch from URL if present
         if (parts.length >= 4 && (parts[2] === 'tree' || parts[2] === 'blob')) {
           branch = parts[3];
+        }
+
+        // Fetch all branches from GitHub API
+        if (owner && repo) {
+          setFetchingBranches(true);
+          try {
+            const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches?per_page=100`);
+            if (res.ok) {
+              const data = await res.json();
+              const branchNames = data.map(b => b.name);
+              setAvailableBranches(branchNames);
+              // If no branch was in URL, use the default (first branch is usually default)
+              if (parts.length < 4 && branchNames.length > 0) {
+                // Prefer main > master > first available
+                branch = branchNames.includes('main') ? 'main'
+                  : branchNames.includes('master') ? 'master'
+                  : branchNames[0];
+              }
+            }
+          } catch (_) {
+            // GitHub API failed (private repo or rate limit), keep defaults
+          } finally {
+            setFetchingBranches(false);
+          }
         }
       }
     } catch (err) {
       // ignore invalid URLs while typing
     }
-    setFormData({ ...formData, githubUrl: url, branch });
+    setFormData({ ...formData, githubUrl: url, branch, name: autoName, domain: autoDomain });
   };
 
   return (
@@ -123,17 +162,30 @@ function App() {
                   </div>
                 </div>
                 <div className="form-group">
-                  <label>Branch</label>
+                  <label>Branch {fetchingBranches && <span style={{ fontSize: '0.75rem', color: 'var(--accent-color)', marginLeft: '8px' }}>⏳ Fetching branches...</span>}</label>
                   <div style={{ position: 'relative' }}>
-                    <GitBranch size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--text-secondary)' }} />
-                    <input 
-                      type="text" 
-                      placeholder="main" 
-                      value={formData.branch} 
-                      onChange={e => setFormData({...formData, branch: e.target.value})} 
-                      style={{ paddingLeft: '40px' }}
-                      required
-                    />
+                    <GitBranch size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--text-secondary)', zIndex: 1 }} />
+                    {availableBranches.length > 0 ? (
+                      <select
+                        value={formData.branch}
+                        onChange={e => setFormData({...formData, branch: e.target.value})}
+                        style={{ paddingLeft: '40px', width: '100%', appearance: 'none' }}
+                        required
+                      >
+                        {availableBranches.map(b => (
+                          <option key={b} value={b}>{b}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input 
+                        type="text" 
+                        placeholder="main" 
+                        value={formData.branch} 
+                        onChange={e => setFormData({...formData, branch: e.target.value})} 
+                        style={{ paddingLeft: '40px' }}
+                        required
+                      />
+                    )}
                   </div>
                 </div>
               </>
