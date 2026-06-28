@@ -149,7 +149,7 @@ function App() {
           ) : (
             <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px' }}
               onClick={() => setShowGithubConnect(true)}>
-              <Github size={14} /> Connect GitHub
+              <Code2 size={14} /> Connect GitHub
             </button>
           )}
         </div>
@@ -610,7 +610,7 @@ function GitHubConnect({ onConnected, onClose }) {
       <div className="glass-panel" style={{ width: '380px', maxWidth: '90vw', textAlign: 'center', position: 'relative' }}>
         <button onClick={onClose} style={{ position: 'absolute', top: '12px', right: '12px', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.2rem' }}>✕</button>
 
-        <Github size={40} style={{ marginBottom: '12px', color: 'var(--accent-color)' }} />
+        <Code2 size={40} style={{ marginBottom: '12px', color: 'var(--accent-color)' }} />
         <h3 style={{ marginBottom: '6px' }}>Connect GitHub Account</h3>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }}>
           Link your GitHub account to deploy private repositories without needing a PAT each time.
@@ -618,7 +618,7 @@ function GitHubConnect({ onConnected, onClose }) {
 
         {step === 'idle' && (
           <button className="btn btn-primary" style={{ width: '100%' }} onClick={startFlow}>
-            <Github size={16} /> Connect with GitHub
+            <Code2 size={16} /> Connect with GitHub
           </button>
         )}
 
