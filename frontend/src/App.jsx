@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings, ExternalLink, Code2, LogOut, CheckCircle, Bell, Key, FileText, Save, X, Search } from 'lucide-react';
+import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings, ExternalLink, Code2, LogOut, CheckCircle, Bell, Key, FileText, Save, X, Search, Copy, Check, ChevronDown } from 'lucide-react';
 import { api } from './api';
 import Login from './Login';
 
@@ -27,6 +27,8 @@ function App() {
 
   const [crashes, setCrashes] = useState([]);
   const [showCrashes, setShowCrashes] = useState(false);
+
+  const [templates, setTemplates] = useState([]);
 
   const [formData, setFormData] = useState({ 
     name: '', 
@@ -65,6 +67,13 @@ function App() {
     } catch (e) {}
   };
 
+  const fetchTemplates = async () => {
+    try {
+      const data = await api.getTemplates();
+      setTemplates(data.templates);
+    } catch (e) {}
+  };
+
   useEffect(() => {
     const handleAuthError = () => setIsAuthenticated(false);
     window.addEventListener('auth_error', handleAuthError);
@@ -77,6 +86,7 @@ function App() {
     fetchApps();
     fetchSecrets();
     fetchCrashes();
+    fetchTemplates();
     const interval = setInterval(() => {
       fetchApps();
       fetchCrashes();
@@ -374,12 +384,33 @@ function App() {
               <button onClick={() => setShowDeployModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.3rem', lineHeight: 1, padding: '4px' }}>✕</button>
             </div>
 
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-              <button type="button" className={`btn ${deployType === 'local' ? 'btn-primary' : 'btn-secondary'}`} style={{ flex: 1 }} onClick={() => setDeployType('local')}>Local Folder</button>
-              <button type="button" className={`btn ${deployType === 'github' ? 'btn-primary' : 'btn-secondary'}`} style={{ flex: 1 }} onClick={() => setDeployType('github')}>GitHub Repo</button>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', background: 'rgba(0,0,0,0.2)', padding: '6px', borderRadius: '8px' }}>
+              <button type="button" className={`btn ${deployType === 'local' ? 'btn-primary' : 'btn-secondary'}`} style={{ flex: 1, background: deployType === 'local' ? '' : 'transparent', border: 'none' }} onClick={() => setDeployType('local')}>Local Folder</button>
+              <button type="button" className={`btn ${deployType === 'github' ? 'btn-primary' : 'btn-secondary'}`} style={{ flex: 1, background: deployType === 'github' ? '' : 'transparent', border: 'none' }} onClick={() => setDeployType('github')}>GitHub Repo</button>
+              <button type="button" className={`btn ${deployType === 'templates' ? 'btn-primary' : 'btn-secondary'}`} style={{ flex: 1, background: deployType === 'templates' ? '' : 'transparent', border: 'none' }} onClick={() => setDeployType('templates')}>Templates</button>
             </div>
 
             <form onSubmit={async (e) => { await handleDeploy(e); if (!deploying) setShowDeployModal(false); }}>
+              {deployType === 'templates' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+                  {templates.map(t => (
+                    <div key={t.id} onClick={() => {
+                      setDeployType(t.type);
+                      setFormData(prev => ({ ...prev, installCmd: t.installCmd, buildCmd: t.buildCmd, startCmd: t.startCmd }));
+                      setEnvVars(t.envVars.length ? t.envVars : [{ key: '', value: '' }]);
+                    }} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', padding: '16px', cursor: 'pointer', transition: 'all 0.2s' }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = t.color; e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '1.5rem' }}>{t.icon}</span>
+                        <div style={{ fontWeight: '600', fontSize: '1rem' }}>{t.name}</div>
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{t.description}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
               {deployType === 'github' && (
                 <>
                   <div className="form-group">
@@ -598,6 +629,22 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
   const [liveLogsDone, setLiveLogsDone] = useState(false);
   const liveLogsRef = useRef(null);
 
+  // Env vars state
+  const [envVars, setEnvVars] = useState(null);
+  const [envSaving, setEnvSaving] = useState(false);
+  const [envMsg, setEnvMsg] = useState('');
+
+  // Metrics state
+  const [metrics, setMetrics] = useState([]);
+
+  // Cache clear state
+  const [cacheBusy, setCacheBusy] = useState(false);
+  const [cacheMsg, setCacheMsg] = useState('');
+
+  // Discord test state
+  const [discordBusy, setDiscordBusy] = useState(false);
+  const [discordMsg, setDiscordMsg] = useState('');
+
   useEffect(() => {
     if (liveLogsRef.current) {
       liveLogsRef.current.scrollTop = liveLogsRef.current.scrollHeight;
@@ -605,13 +652,77 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
   }, [liveLogs]);
 
   useEffect(() => {
-    if (activeTab === 'deployments' && !history) {
-      fetchHistory();
-    }
-    if (activeTab === 'logs' && !logs) {
-      fetchLogs();
-    }
+    if (activeTab === 'deployments' && !history) fetchHistory();
+    if (activeTab === 'logs' && !logs) fetchLogs();
+    if (activeTab === 'environment' && !envVars) fetchEnvVars();
+    if (activeTab === 'overview' && metrics.length === 0) fetchMetrics();
   }, [activeTab]);
+
+  const fetchEnvVars = async () => {
+    try {
+      const data = await api.getEnvVars(app.name);
+      // Convert object to array of {key, value} for editing
+      setEnvVars(Object.entries(data.vars || {}).map(([key, value]) => ({ key, value })));
+    } catch (e) { setEnvVars([]); }
+  };
+
+  const fetchMetrics = async () => {
+    try {
+      const data = await api.getMetrics(app.name);
+      setMetrics(data.metrics || []);
+    } catch (e) {}
+  };
+
+  const handleSaveEnv = async () => {
+    setEnvSaving(true); setEnvMsg('');
+    try {
+      const vars = {};
+      (envVars || []).forEach(({ key, value }) => { if (key.trim()) vars[key.trim()] = value; });
+      const res = await api.saveEnvVars(app.name, vars);
+      setEnvMsg('✅ ' + res.message);
+    } catch (e) { setEnvMsg('❌ ' + e.message); }
+    finally { setEnvSaving(false); }
+  };
+
+  const handleClearCache = async () => {
+    if (!confirm('This will delete node_modules, dist, .next etc. and you will need to redeploy. Continue?')) return;
+    setCacheBusy(true); setCacheMsg('');
+    try {
+      const res = await api.clearCache(app.name);
+      setCacheMsg('✅ ' + res.message);
+    } catch (e) { setCacheMsg('❌ ' + e.message); }
+    finally { setCacheBusy(false); }
+  };
+
+  const handleTestDiscord = async () => {
+    setDiscordBusy(true); setDiscordMsg('');
+    try {
+      const res = await api.testDiscordNotification();
+      setDiscordMsg('✅ ' + res.message);
+    } catch (e) { setDiscordMsg('❌ ' + e.message); }
+    finally { setDiscordBusy(false); }
+  };
+
+  // SVG sparkline helper
+  const Sparkline = ({ data, color, label }) => {
+    if (!data || data.length < 2) return <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>Collecting data...</div>;
+    const vals = data.map(d => d[label] || 0);
+    const max = Math.max(...vals, 1);
+    const W = 200, H = 50;
+    const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * W},${H - (v / max) * H}`).join(' ');
+    const current = vals[vals.length - 1];
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <svg width={W} height={H} style={{ overflow: 'visible' }}>
+          <polyline fill="none" stroke={color} strokeWidth="1.5" points={pts} />
+          <circle cx={(vals.length - 1) / (vals.length - 1) * W} cy={H - (vals[vals.length-1] / max) * H} r="3" fill={color} />
+        </svg>
+        <span style={{ fontSize: '0.85rem', fontWeight: '600', color }}>
+          {label === 'memory' ? `${(current / (1024*1024)).toFixed(1)} MB` : `${current.toFixed(1)}%`}
+        </span>
+      </div>
+    );
+  };
 
   const fetchLogs = async () => {
     try {
@@ -726,7 +837,7 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
         <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
           {/* Sidebar */}
           <div style={{ width: '220px', borderRight: '1px solid rgba(255,255,255,0.08)', padding: '24px 0', background: 'rgba(0,0,0,0.2)' }}>
-            {['overview', 'deployments', 'logs', 'settings'].map(tab => (
+            {['overview', 'environment', 'deployments', 'logs', 'settings'].map(tab => (
               <button 
                 key={tab} 
                 onClick={() => setActiveTab(tab)}
@@ -738,7 +849,7 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
                   transition: 'all 0.1s'
                 }}
               >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {tab === 'environment' ? 'Environment' : tab.charAt(0).toUpperCase() + tab.slice(1)}
               </button>
             ))}
           </div>
@@ -799,8 +910,59 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
                         </div>
                       )}
                     </div>
+                    {/* Resource Monitoring Mini Charts */}
+                    {metrics.length > 1 && (
+                      <div style={{ marginTop: '24px', paddingTop: '24px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>Resource Usage (last 30 min)</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          <div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>CPU</div>
+                            <Sparkline data={metrics} color="#3b82f6" label="cpu" />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>Memory</div>
+                            <Sparkline data={metrics} color="#10b981" label="memory" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* ENVIRONMENT TAB */}
+            {activeTab === 'environment' && (
+              <div className="animate-fade-in">
+                <h3 style={{ marginTop: 0, marginBottom: '8px', fontWeight: '500', fontSize: '1.2rem' }}>Environment Variables</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '24px' }}>Changes are saved to <code>.env</code> and the app is automatically restarted.</p>
+                {!envVars ? (
+                  <div style={{ color: 'var(--text-secondary)' }}>Loading...</div>
+                ) : (
+                  <div>
+                    <div style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', overflow: 'hidden', marginBottom: '16px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 40px', background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '8px 16px', fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: '500' }}>
+                        <span>Key</span><span>Value</span><span></span>
+                      </div>
+                      {envVars.map((ev, i) => (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 40px', borderBottom: '1px solid rgba(255,255,255,0.04)', alignItems: 'center' }}>
+                          <input value={ev.key} onChange={e => { const n=[...envVars]; n[i]={...n[i],key:e.target.value}; setEnvVars(n); }}
+                            placeholder="KEY" style={{ background:'transparent', border:'none', borderRight:'1px solid rgba(255,255,255,0.06)', padding:'10px 16px', color:'#fff', fontFamily:'monospace', outline:'none', fontSize:'0.85rem' }} />
+                          <input value={ev.value} onChange={e => { const n=[...envVars]; n[i]={...n[i],value:e.target.value}; setEnvVars(n); }}
+                            type="text" placeholder="value" style={{ background:'transparent', border:'none', borderRight:'1px solid rgba(255,255,255,0.06)', padding:'10px 16px', color:'#fff', fontFamily:'monospace', outline:'none', fontSize:'0.85rem' }} />
+                          <button onClick={() => setEnvVars(envVars.filter((_,j)=>j!==i))} style={{ background:'none', border:'none', color:'var(--danger)', cursor:'pointer', padding:'0 12px', fontSize:'1rem' }}>×</button>
+                        </div>
+                      ))}
+                      <button onClick={() => setEnvVars([...envVars, {key:'',value:''}])} style={{ width:'100%', background:'transparent', border:'none', color:'var(--text-secondary)', padding:'10px 16px', cursor:'pointer', textAlign:'left', fontSize:'0.85rem' }}>+ Add Variable</button>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <button onClick={handleSaveEnv} disabled={envSaving} className="btn btn-primary" style={{ display:'flex', alignItems:'center', gap:'6px' }}>
+                        <Save size={14}/> {envSaving ? 'Saving...' : 'Save & Restart'}
+                      </button>
+                      {envMsg && <span style={{ fontSize:'0.85rem' }}>{envMsg}</span>}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             
@@ -918,7 +1080,8 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
               <div className="animate-fade-in">
                 <h3 style={{ marginTop: 0, marginBottom: '24px', fontWeight: '500', fontSize: '1.2rem' }}>Project Settings</h3>
                 
-                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '24px', marginBottom: '24px' }}>
+                {/* App Controls */}
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '24px', marginBottom: '16px' }}>
                   <h4 style={{ margin: '0 0 16px 0', fontSize: '1rem' }}>Application Controls</h4>
                   <div style={{ display: 'flex', gap: '12px' }}>
                     {app.status !== 'online' ? (
@@ -936,6 +1099,46 @@ function ProjectDashboardModal({ app, onAction, onClose }) {
                   </div>
                 </div>
 
+                {/* Webhook Push-to-Deploy */}
+                {app.deployType === 'github' && (
+                  <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '24px', marginBottom: '16px' }}>
+                    <h4 style={{ margin: '0 0 8px 0', fontSize: '1rem' }}>Push-to-Deploy Webhook</h4>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>Add this URL to your GitHub repo → Settings → Webhooks → Payload URL. Auto-redeploys on every push to <code>{app.branch || 'main'}</code>.</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(0,0,0,0.3)', padding: '10px 14px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)', fontFamily: 'monospace', fontSize: '0.82rem' }}>
+                      <span style={{ flex: 1, wordBreak: 'break-all' }}>https://api.subhan.tech/webhook/{app.name}</span>
+                      <button onClick={() => navigator.clipboard.writeText(`https://api.subhan.tech/webhook/${app.name}`)} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', flexShrink: 0 }} title="Copy">
+                        <Copy size={14} />
+                      </button>
+                    </div>
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '8px', marginBottom: 0 }}>Set Content-Type to <code>application/json</code>. Optionally add a secret as <code>WEBHOOK_SECRET_{app.name.toUpperCase()}</code> in Secrets Vault.</p>
+                  </div>
+                )}
+
+                {/* Clear Cache */}
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '24px', marginBottom: '16px' }}>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '1rem' }}>Build Cache</h4>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>Delete <code>node_modules</code>, <code>dist</code>, <code>.next</code> and other build artifacts. You'll need to redeploy afterwards for a completely fresh build.</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <button onClick={handleClearCache} disabled={cacheBusy} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Trash2 size={14} /> {cacheBusy ? 'Clearing...' : 'Clear Cache'}
+                    </button>
+                    {cacheMsg && <span style={{ fontSize: '0.85rem' }}>{cacheMsg}</span>}
+                  </div>
+                </div>
+
+                {/* Discord Notifications */}
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '24px', marginBottom: '16px' }}>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>🔔 Discord Notifications</h4>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>Get deployment alerts in Discord. Save your Discord Webhook URL as <code>DISCORD_WEBHOOK_URL</code> in the Secrets Vault (top navbar), then test it below.</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <button onClick={handleTestDiscord} disabled={discordBusy} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Bell size={14} /> {discordBusy ? 'Sending...' : 'Send Test Notification'}
+                    </button>
+                    {discordMsg && <span style={{ fontSize: '0.85rem' }}>{discordMsg}</span>}
+                  </div>
+                </div>
+
+                {/* Danger Zone */}
                 <div style={{ background: 'rgba(255,0,0,0.05)', border: '1px solid rgba(255,0,0,0.2)', borderRadius: '8px', padding: '24px' }}>
                   <h4 style={{ margin: '0 0 16px 0', fontSize: '1rem', color: '#ff7b7b' }}>Danger Zone</h4>
                   <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>

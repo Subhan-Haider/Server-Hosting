@@ -235,5 +235,45 @@ export const api = {
     });
     if (!res.ok) throw new Error('Failed to poll for token');
     return res.json();
-  }
+  },
+
+  async getEnvVars(name) {
+    const res = await fetchAuth(`${API_URL}/env/${name}`);
+    if (!res.ok) throw new Error('Failed to fetch env vars');
+    return res.json();
+  },
+
+  async saveEnvVars(name, vars) {
+    const res = await fetchAuth(`${API_URL}/env/${name}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vars })
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async getMetrics(name) {
+    const res = await fetchAuth(`${API_URL}/metrics/${name}`);
+    if (!res.ok) throw new Error('Failed to fetch metrics');
+    return res.json();
+  },
+
+  async clearCache(name) {
+    const res = await fetchAuth(`${API_URL}/clear-cache/${name}`, { method: 'POST' });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async testDiscordNotification() {
+    const res = await fetchAuth(`${API_URL}/notify/test`, { method: 'POST' });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async getTemplates() {
+    const res = await fetchAuth(`${API_URL}/templates`);
+    if (!res.ok) throw new Error('Failed to fetch templates');
+    return res.json();
+  },
 };

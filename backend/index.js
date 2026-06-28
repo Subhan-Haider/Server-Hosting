@@ -11,8 +11,12 @@ const historyManager = require('./historyManager');
 const secretsManager = require('./secretsManager');
 const webhookService = require('./webhookService');
 const healthService = require('./healthService');
+const metricsService = require('./metricsService');
+const notificationService = require('./notificationService');
+const templates = require('./templates');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors({
@@ -213,6 +217,7 @@ app.post('/api/deploy', async (req, res) => {
         };
         historyManager.logDeployment(domain, deploymentData);
         webhookService.sendWebhook(deploymentData);
+        notificationService.sendDiscordNotification({ ...deploymentData, branch: meta.branch });
 
         logger(`Deployment successful! Domain: ${domain}, Port: ${port}\n`);
         res.write(`data: ${JSON.stringify({ type: 'success', name: finalName, port, domain })}\n\n`);
@@ -231,6 +236,7 @@ app.post('/api/deploy', async (req, res) => {
             };
             historyManager.logDeployment(domain, deploymentData);
             webhookService.sendWebhook(deploymentData);
+            notificationService.sendDiscordNotification(deploymentData);
         }
         res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
         res.end();
@@ -705,6 +711,152 @@ app.post('/api/file/:name/write', (req, res) => {
 
 app.get('/api/crashes', (req, res) => {
     res.json(crashStore);
+});
+
+// ─── Environment Variables Editor ──────────────────────────────────────────
+app.get('/api/env/:name', (req, res) => {
+    try {
+        const project = portManager.getProjectDetails(req.params.name);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        const envFiles = ['.env', '.env.local'];
+        let vars = {};
+        for (const file of envFiles) {
+            const p = path.join(project.path, file);
+            if (fs.existsSync(p)) {
+                const lines = fs.readFileSync(p, 'utf8').split('\n');
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed || trimmed.startsWith('#')) continue;
+                    const eqIdx = trimmed.indexOf('=');
+                    if (eqIdx > 0) {
+                        const key = trimmed.substring(0, eqIdx).trim();
+                        const val = trimmed.substring(eqIdx + 1).trim().replace(/^"|"$/g, '');
+                        vars[key] = val;
+                    }
+                }
+                break;
+            }
+        }
+        res.json({ vars });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/env/:name', async (req, res) => {
+    try {
+        const project = portManager.getProjectDetails(req.params.name);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        const { vars } = req.body;
+        if (!vars || typeof vars !== 'object') return res.status(400).json({ error: 'vars object required' });
+        envService.writeEnvFile(project.path, vars);
+        // Restart the PM2 process so new env takes effect
+        const pm2Name = project.pm2Name || req.params.name;
+        await pm2Service.restartProject(pm2Name);
+        res.json({ message: 'Environment variables saved and project restarted.' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── GitHub Webhook (push-to-deploy) ───────────────────────────────────────
+const pendingWebhooks = new Map(); // debounce per app
+app.post('/webhook/:name', express.raw({ type: '*/*' }), async (req, res) => {
+    try {
+        const { name } = req.params;
+        const project = portManager.getProjectDetails(name);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+
+        // Verify HMAC signature if secret is set
+        const webhookSecret = secretsManager.getSecret(`WEBHOOK_SECRET_${name}`);
+        if (webhookSecret) {
+            const sig = req.headers['x-hub-signature-256'];
+            const expected = 'sha256=' + crypto.createHmac('sha256', webhookSecret).update(req.body).digest('hex');
+            if (sig !== expected) return res.status(401).json({ error: 'Invalid signature' });
+        }
+
+        const payload = JSON.parse(req.body.toString());
+        const pushedBranch = payload.ref ? payload.ref.replace('refs/heads/', '') : null;
+        const configuredBranch = project.branch || 'main';
+
+        if (pushedBranch && pushedBranch !== configuredBranch) {
+            return res.json({ message: `Ignoring push to branch '${pushedBranch}', watching '${configuredBranch}'` });
+        }
+
+        res.json({ message: 'Webhook received, redeploy queued.' });
+
+        // Debounce: wait 3s in case of multiple rapid pushes
+        if (pendingWebhooks.has(name)) clearTimeout(pendingWebhooks.get(name));
+        pendingWebhooks.set(name, setTimeout(async () => {
+            pendingWebhooks.delete(name);
+            try {
+                const startTime = Date.now();
+                const noop = () => {};
+                const commitHash = await require('./gitService').redeployRepo(project.path, configuredBranch, project.installCmd, project.buildCmd, noop);
+                await pm2Service.restartProject(project.pm2Name || name);
+                notificationService.sendDiscordNotification({
+                    name, domain: project.domain, status: 'success',
+                    type: 'redeploy', branch: configuredBranch, commitHash,
+                    durationMs: Date.now() - startTime
+                });
+            } catch (e) {
+                console.error(`[Webhook] Auto-redeploy failed for ${name}:`, e.message);
+                notificationService.sendDiscordNotification({
+                    name, domain: project.domain, status: 'error',
+                    type: 'redeploy', error: e.message
+                });
+            }
+        }, 3000));
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Metrics ───────────────────────────────────────────────────────────────
+app.get('/api/metrics/:name', (req, res) => {
+    const data = metricsService.getMetrics(req.params.name);
+    res.json({ metrics: data });
+});
+
+// ─── Cache Clear ───────────────────────────────────────────────────────────
+app.post('/api/clear-cache/:name', async (req, res) => {
+    try {
+        const project = portManager.getProjectDetails(req.params.name);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        const dirsToDelete = ['node_modules', '.next', 'dist', 'build', '.nuxt', '.output'];
+        let deleted = [];
+        for (const dir of dirsToDelete) {
+            const target = path.join(project.path, dir);
+            if (fs.existsSync(target)) {
+                fs.rmSync(target, { recursive: true, force: true });
+                deleted.push(dir);
+            }
+        }
+        res.json({ message: `Cache cleared: ${deleted.join(', ') || 'nothing to clear'}` });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Discord Notification Test ─────────────────────────────────────────────
+app.post('/api/notify/test', async (req, res) => {
+    try {
+        await notificationService.sendDiscordNotification({
+            name: 'Test Project',
+            domain: 'example.subhan.tech',
+            status: 'success',
+            type: 'deploy',
+            durationMs: 12000
+        });
+        res.json({ message: 'Test notification sent to Discord.' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Service Templates ─────────────────────────────────────────────────────
+app.get('/api/templates', (req, res) => {
+    res.json({ templates: templates.getTemplates() });
 });
 
 app.get('/api/logs/:name', async (req, res) => {
