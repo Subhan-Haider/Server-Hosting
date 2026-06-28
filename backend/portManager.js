@@ -1,6 +1,24 @@
 const fs = require('fs');
 const path = require('path');
-const getPort = require('get-port');
+const net = require('net');
+
+function isPortFree(port) {
+    return new Promise((resolve) => {
+        const server = net.createServer();
+        server.listen(port, () => {
+            server.once('close', () => resolve(true));
+            server.close();
+        });
+        server.on('error', () => resolve(false));
+    });
+}
+
+async function findFreePortInRange(start, end) {
+    for (let p = start; p <= end; p++) {
+        if (await isPortFree(p)) return p;
+    }
+    throw new Error('No free ports available in range ' + start + '-' + end);
+}
 
 const PORT_MAP_FILE = path.join(__dirname, 'port-map.json');
 
@@ -48,10 +66,8 @@ async function assignFreePort(projectName, domain, projectPath, meta = {}) {
         return portMap[projectName].port;
     }
 
-    // Find a free port between 3000 and 3999
-    // Provide an array of preferred ports for compatibility with all versions
-    const preferredPorts = Array.from({length: 1000}, (_, i) => 3000 + i);
-    const port = await getPort({ port: preferredPorts });
+    // Find a free port between 3000 and 3999 using native net module
+    const port = await findFreePortInRange(3000, 3999);
     
     try {
         await killPort(port); // Double check safety

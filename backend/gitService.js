@@ -123,12 +123,17 @@ async function cloneAndSetup(rawRepoUrl, pat, projectName, branch = 'main', user
     ensureProjectsDir();
 
     const repoUrl = cleanRepoUrl(rawRepoUrl);
-    const finalProjectName = projectName || extractProjectNameFromUrl(repoUrl);
-    const projectPath = path.join(PROJECTS_DIR, finalProjectName);
+    let finalProjectName = projectName || extractProjectNameFromUrl(repoUrl);
+    let projectPath = path.join(PROJECTS_DIR, finalProjectName);
     const authUrl = getAuthRepoUrl(repoUrl, pat);
 
-    if (fs.existsSync(projectPath)) {
-        throw new Error(`Project directory already exists at ${projectPath}. Use a different name or redeploy it.`);
+    // If the directory already exists, automatically append a number to make it unique
+    let counter = 1;
+    const baseName = finalProjectName;
+    while (fs.existsSync(projectPath)) {
+        finalProjectName = `${baseName}-${counter}`;
+        projectPath = path.join(PROJECTS_DIR, finalProjectName);
+        counter++;
     }
 
     console.log(`Cloning ${repoUrl} (branch: ${branch}) into ${projectPath}...`);
