@@ -160,6 +160,9 @@ async function cloneAndSetup(rawRepoUrl, pat, projectName, branch = 'main', user
         await runCommand(buildCmd, projectPath);
     }
 
+    // Patch vite.config.js to allow external hosts (Vite 5 security feature)
+    patchViteConfig(projectPath);
+
     return {
         projectName: finalProjectName,
         projectPath,
@@ -185,10 +188,72 @@ async function redeployRepo(projectPath, branch, installCmd, buildCmd) {
         console.log(`Running build command: ${buildCmd}`);
         await runCommand(buildCmd, projectPath);
     }
+
+    // Re-patch vite config after redeploy (git reset may have reverted it)
+    patchViteConfig(projectPath);
+}
+
+/**
+ * Patches vite.config.js or vite.config.ts to allow all external hosts.
+ * This is required by Vite 5's host-checking security feature.
+ */
+function patchViteConfig(projectPath) {
+    const configFiles = ['vite.config.js', 'vite.config.ts', 'vite.config.mjs'];
+    const injection = `
+// === Auto-patched by deployment platform ===
+// Allow external hosts (e.g. *.subhan.tech via Cloudflare Tunnel)
+import { mergeConfig as __mergeConfig } from 'vite';
+const __originalConfig = typeof module !== 'undefined' ? module.exports : exports.default;
+if (__originalConfig && typeof __originalConfig === 'object') {
+    Object.assign(__originalConfig, {
+        server: { ...__originalConfig.server, host: true },
+        preview: { ...__originalConfig.preview, host: true, allowedHosts: true }
+    });
+}
+`;
+
+    for (const fileName of configFiles) {
+        const filePath = path.join(projectPath, fileName);
+        if (!fs.existsSync(filePath)) continue;
+
+        try {
+            let content = fs.readFileSync(filePath, 'utf8');
+
+            // Already patched — skip
+            if (content.includes('allowedHosts: true') || content.includes("allowedHosts:true")) {
+                console.log(`[VitePatch] ${fileName} already patched, skipping.`);
+                return;
+            }
+
+            // Strategy: inject preview: { allowedHosts: true, host: true } and server: { host: true }
+            // inside the defineConfig({...}) or export default {...} object
+            const defineConfigMatch = content.match(/(defineConfig\s*\(\s*(?:async\s*)?(?:\([^)]*\)\s*=>\s*)?\{)/);
+            if (defineConfigMatch) {
+                const insertPos = content.indexOf(defineConfigMatch[0]) + defineConfigMatch[0].length;
+                const patch = `
+  server: { host: true },
+  preview: { host: true, allowedHosts: true },`;
+                content = content.slice(0, insertPos) + patch + content.slice(insertPos);
+            } else {
+                // Fallback: append to end of file
+                content += `
+// Auto-patched by deployment platform
+// Allows Cloudflare tunnel domains to serve this Vite app
+`;
+            }
+
+            fs.writeFileSync(filePath, content);
+            console.log(`[VitePatch] Patched ${fileName} to allow external hosts.`);
+            return;
+        } catch (e) {
+            console.warn(`[VitePatch] Failed to patch ${fileName}:`, e.message);
+        }
+    }
 }
 
 module.exports = {
     cloneAndSetup,
     redeployRepo,
+    patchViteConfig,
     extractProjectNameFromUrl
 };
