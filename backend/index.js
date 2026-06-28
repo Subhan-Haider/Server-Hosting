@@ -8,7 +8,16 @@ const envService = require('./envService');
 const authService = require('./authService');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+    origin: [
+        "https://app.subhan.tech",
+        "http://localhost:3000",
+        "http://localhost:5000",
+        "http://localhost:5173",
+        "http://localhost:6004"
+    ],
+    credentials: true
+}));
 app.use(express.json());
 
 // Endpoints

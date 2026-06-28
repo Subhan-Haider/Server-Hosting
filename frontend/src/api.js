@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || 'https://api.subhan.tech/api';
+const API_URL = 'https://api.subhan.tech/api';
 
 export const api = {
   async getApps() {
