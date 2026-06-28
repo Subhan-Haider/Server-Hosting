@@ -255,21 +255,17 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Backend server running on port ${PORT}`);
 
-    // On startup, sync all known deployed apps into the deployments-config.yml
-    // This ensures apps deployed before the new tunnel are still accessible
+    // On startup, batch-sync all deployed apps into deployments-config.yml
+    // Single file write + single tunnel restart — no repeated restarts
     try {
         const portMap = portManager.loadPortMap();
-        const entries = Object.values(portMap);
-        if (entries.length > 0) {
-            console.log(`[Startup] Syncing ${entries.length} app(s) into deployments-config.yml...`);
-            for (const app of entries) {
-                if (app.domain && app.port) {
-                    await cloudflareService.updateCloudflareConfig(app.domain, app.port);
-                }
-            }
+        const apps = Object.values(portMap).filter(a => a.domain && a.port);
+        if (apps.length > 0) {
+            console.log(`[Startup] Syncing ${apps.length} app(s) into deployments-config.yml...`);
+            await cloudflareService.syncAllApps(apps);
             console.log('[Startup] Sync complete.');
         }
     } catch (err) {
-        console.error('[Startup] Failed to sync apps into cloudflare config:', err.message);
+        console.error('[Startup] Failed to sync apps:', err.message);
     }
 });
