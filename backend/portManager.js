@@ -49,8 +49,9 @@ async function assignFreePort(projectName, domain, projectPath, meta = {}) {
     }
 
     // Find a free port between 3000 and 3999
-    // get-port allows specifying an iterable of preferred ports or a range
-    const port = await getPort({ port: getPort.makeRange(3000, 3999) });
+    // Provide an array of preferred ports for compatibility with all versions
+    const preferredPorts = Array.from({length: 1000}, (_, i) => 3000 + i);
+    const port = await getPort({ port: preferredPorts });
     
     try {
         await killPort(port); // Double check safety
