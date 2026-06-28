@@ -4,6 +4,8 @@ const portManager = require('./portManager');
 const pm2Service = require('./pm2Service');
 const cloudflareService = require('./cloudflareService');
 const gitService = require('./gitService');
+const envService = require('./envService');
+const authService = require('./authService');
 
 const app = express();
 app.use(cors());
