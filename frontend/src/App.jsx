@@ -572,12 +572,13 @@ function GitHubConnect({ onConnected, onClose }) {
       // Open GitHub device page automatically
       window.open(data.verification_uri || 'https://github.com/login/device', '_blank');
       // Start polling
-      pollRef.current = setInterval(async () => {
+      let pollInterval = (data.interval || 5) * 1000;
+      const doPoll = async () => {
         try {
           const result = await api.pollForToken(data.device_code);
           if (result.access_token) {
             clearInterval(pollRef.current);
-            // Fetch user info
+            // Fetch user info from GitHub
             const userRes = await fetch('https://api.github.com/user', {
               headers: { Authorization: `token ${result.access_token}` }
             });
@@ -586,10 +587,24 @@ function GitHubConnect({ onConnected, onClose }) {
             localStorage.setItem('gh_user', JSON.stringify({ login: user.login, avatar_url: user.avatar_url }));
             setStep('success');
             setTimeout(() => onConnected(result.access_token, user), 1200);
+          } else if (result.error === 'slow_down') {
+            // GitHub asked us to slow down — increase interval
+            clearInterval(pollRef.current);
+            pollInterval += 5000;
+            pollRef.current = setInterval(doPoll, pollInterval);
+          } else if (result.error === 'expired_token' || result.error === 'access_denied') {
+            clearInterval(pollRef.current);
+            setStep('error');
           }
-        } catch (_) {}
-      }, (data.interval || 5) * 1000);
+          // For 'authorization_pending' — just keep polling normally
+        } catch (err) {
+          console.error('Poll error:', err);
+          // Don't stop polling on network errors, keep trying
+        }
+      };
+      pollRef.current = setInterval(doPoll, pollInterval);
     } catch (err) {
+      console.error('Auth error:', err);
       setStep('error');
     }
   };

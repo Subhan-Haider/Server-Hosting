@@ -12,11 +12,10 @@ async function githubPost(url, body) {
         },
         body: JSON.stringify(body)
     });
-    if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`GitHub API error ${res.status}: ${text}`);
-    }
-    return res.json();
+    // Always parse and return JSON — GitHub uses 4xx status for pending/slow_down states
+    // so we must NOT throw on non-ok responses during device flow polling
+    const json = await res.json();
+    return json;
 }
 
 async function requestDeviceCode() {
