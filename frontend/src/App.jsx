@@ -1,16 +1,21 @@
-import { useState, useEffect } from 'react';
-import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings, ExternalLink } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings, ExternalLink, Github, LogOut, CheckCircle } from 'lucide-react';
 import { api } from './api';
 
 function App() {
   const [apps, setApps] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deploying, setDeploying] = useState(false);
-  const [deployType, setDeployType] = useState('local'); // 'local' or 'github'
+  const [deployType, setDeployType] = useState('local');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [availableBranches, setAvailableBranches] = useState([]);
   const [fetchingBranches, setFetchingBranches] = useState(false);
   const [envVars, setEnvVars] = useState([{ key: '', value: '' }]);
+  const [githubToken, setGithubToken] = useState(() => localStorage.getItem('gh_token') || '');
+  const [githubUser, setGithubUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('gh_user') || 'null'); } catch { return null; }
+  });
+  const [showGithubConnect, setShowGithubConnect] = useState(false);
   const [formData, setFormData] = useState({ 
     name: '', 
     path: '', 
@@ -49,7 +54,9 @@ function App() {
       envVars.forEach(({ key, value }) => {
         if (key.trim()) envVarsObj[key.trim()] = value;
       });
-      await api.deployApp({ ...formData, deployType, envVars: Object.keys(envVarsObj).length > 0 ? envVarsObj : undefined });
+      // Use connected GitHub token as PAT if no manual PAT is entered
+      const effectivePat = formData.githubPat || githubToken || undefined;
+      await api.deployApp({ ...formData, githubPat: effectivePat, deployType, envVars: Object.keys(envVarsObj).length > 0 ? envVarsObj : undefined });
       setFormData({ 
         name: '', path: '', domain: '', 
         githubUrl: '', githubPat: '', branch: 'main',
@@ -94,7 +101,8 @@ function App() {
         if (owner && repo) {
           setFetchingBranches(true);
           try {
-            const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches?per_page=100`);
+            const headers = githubToken ? { Authorization: `token ${githubToken}` } : {};
+            const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches?per_page=100`, { headers });
             if (res.ok) {
               const data = await res.json();
               const branchNames = data.map(b => b.name);
@@ -123,9 +131,40 @@ function App() {
   return (
     <div className="container animate-fade-in">
       <div className="header">
-        <h1>Auto Deployment Platform</h1>
-        <p>Your self-hosted Vercel alternative for lightning fast deployments</p>
+        <div>
+          <h1>Auto Deployment Platform</h1>
+          <p>Your self-hosted Vercel alternative for lightning fast deployments</p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          {githubUser ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.07)', padding: '6px 12px', borderRadius: '20px' }}>
+              <img src={githubUser.avatar_url} alt="avatar" style={{ width: '24px', height: '24px', borderRadius: '50%' }} />
+              <span style={{ fontSize: '0.85rem', fontWeight: '500' }}>{githubUser.login}</span>
+              <button
+                onClick={() => { localStorage.removeItem('gh_token'); localStorage.removeItem('gh_user'); setGithubToken(''); setGithubUser(null); }}
+                title="Disconnect GitHub"
+                style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '0', display: 'flex' }}
+              ><LogOut size={14} /></button>
+            </div>
+          ) : (
+            <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px' }}
+              onClick={() => setShowGithubConnect(true)}>
+              <Github size={14} /> Connect GitHub
+            </button>
+          )}
+        </div>
       </div>
+
+      {showGithubConnect && (
+        <GitHubConnect
+          onConnected={(token, user) => {
+            setGithubToken(token);
+            setGithubUser(user);
+            setShowGithubConnect(false);
+          }}
+          onClose={() => setShowGithubConnect(false)}
+        />
+      )}
 
       <div className="grid">
         {/* Deploy Form */}
@@ -273,13 +312,27 @@ function App() {
                   Fill these only if you want to override the auto-detection.
                 </p>
                 <div className="form-group">
-                  <label>GitHub PAT (For Private Repos)</label>
-                  <input 
-                    type="password" 
-                    placeholder="ghp_..." 
-                    value={formData.githubPat} 
-                    onChange={e => setFormData({...formData, githubPat: e.target.value})} 
-                  />
+                  {githubToken ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '8px' }}>
+                      <CheckCircle size={16} color="var(--success)" />
+                      <span style={{ fontSize: '0.82rem', color: 'var(--success)' }}>
+                        GitHub connected as <strong>{githubUser?.login}</strong> — token will be used automatically
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <label>GitHub PAT (For Private Repos)</label>
+                      <input 
+                        type="password" 
+                        placeholder="ghp_... or connect GitHub above" 
+                        value={formData.githubPat} 
+                        onChange={e => setFormData({...formData, githubPat: e.target.value})} 
+                      />
+                      <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                        Or <button type="button" onClick={() => setShowGithubConnect(true)} style={{ background: 'none', border: 'none', color: 'var(--accent-color)', cursor: 'pointer', padding: 0, fontSize: '0.72rem', textDecoration: 'underline' }}>connect your GitHub account</button> to avoid entering this every time.
+                      </p>
+                    </>
+                  )}
                 </div>
                 <div className="form-group">
                   <label>Install Command (Override)</label>
@@ -500,6 +553,118 @@ function AppCard({ app, onAction, delay }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function GitHubConnect({ onConnected, onClose }) {
+  const [step, setStep] = useState('idle'); // idle | waiting | success | error
+  const [deviceData, setDeviceData] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const pollRef = useRef(null);
+
+  const startFlow = async () => {
+    try {
+      setStep('loading');
+      const data = await api.requestDeviceCode();
+      setDeviceData(data);
+      setStep('waiting');
+      // Open GitHub device page automatically
+      window.open(data.verification_uri || 'https://github.com/login/device', '_blank');
+      // Start polling
+      pollRef.current = setInterval(async () => {
+        try {
+          const result = await api.pollForToken(data.device_code);
+          if (result.access_token) {
+            clearInterval(pollRef.current);
+            // Fetch user info
+            const userRes = await fetch('https://api.github.com/user', {
+              headers: { Authorization: `token ${result.access_token}` }
+            });
+            const user = await userRes.json();
+            localStorage.setItem('gh_token', result.access_token);
+            localStorage.setItem('gh_user', JSON.stringify({ login: user.login, avatar_url: user.avatar_url }));
+            setStep('success');
+            setTimeout(() => onConnected(result.access_token, user), 1200);
+          }
+        } catch (_) {}
+      }, (data.interval || 5) * 1000);
+    } catch (err) {
+      setStep('error');
+    }
+  };
+
+  useEffect(() => () => clearInterval(pollRef.current), []);
+
+  const copyCode = () => {
+    navigator.clipboard.writeText(deviceData?.user_code || '');
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex',
+      alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)'
+    }}>
+      <div className="glass-panel" style={{ width: '380px', maxWidth: '90vw', textAlign: 'center', position: 'relative' }}>
+        <button onClick={onClose} style={{ position: 'absolute', top: '12px', right: '12px', background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.2rem' }}>✕</button>
+
+        <Github size={40} style={{ marginBottom: '12px', color: 'var(--accent-color)' }} />
+        <h3 style={{ marginBottom: '6px' }}>Connect GitHub Account</h3>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }}>
+          Link your GitHub account to deploy private repositories without needing a PAT each time.
+        </p>
+
+        {step === 'idle' && (
+          <button className="btn btn-primary" style={{ width: '100%' }} onClick={startFlow}>
+            <Github size={16} /> Connect with GitHub
+          </button>
+        )}
+
+        {step === 'loading' && (
+          <p style={{ color: 'var(--text-secondary)' }}>⏳ Requesting code from GitHub...</p>
+        )}
+
+        {step === 'waiting' && deviceData && (
+          <div>
+            <p style={{ marginBottom: '10px', fontSize: '0.85rem' }}>A new tab has opened. Enter this code on GitHub:</p>
+            <div
+              onClick={copyCode}
+              style={{
+                fontSize: '2rem', fontWeight: 'bold', letterSpacing: '8px', fontFamily: 'monospace',
+                background: 'rgba(255,255,255,0.07)', borderRadius: '10px', padding: '16px',
+                cursor: 'pointer', marginBottom: '12px', userSelect: 'all',
+                border: '2px dashed var(--accent-color)'
+              }}
+            >
+              {deviceData.user_code}
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+              {copied ? '✅ Copied!' : 'Click the code to copy'}
+            </p>
+            <a href={deviceData.verification_uri || 'https://github.com/login/device'} target="_blank" rel="noopener noreferrer"
+              className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none', marginBottom: '16px' }}>
+              <ExternalLink size={14} /> Open GitHub Device Page
+            </a>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>⏳ Waiting for you to authorize... (auto-detects)</p>
+          </div>
+        )}
+
+        {step === 'success' && (
+          <div>
+            <CheckCircle size={48} color="var(--success)" style={{ marginBottom: '12px' }} />
+            <p style={{ color: 'var(--success)', fontWeight: 'bold' }}>✅ GitHub Connected!</p>
+          </div>
+        )}
+
+        {step === 'error' && (
+          <div>
+            <p style={{ color: 'var(--danger)', marginBottom: '12px' }}>❌ Failed to connect. Please try again.</p>
+            <button className="btn btn-primary" onClick={() => setStep('idle')}>Retry</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
