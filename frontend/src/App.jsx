@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings, ExternalLink, Code2, LogOut, CheckCircle, Bell, Key, FileText, Save, X, Search } from 'lucide-react';
 import { api } from './api';
+import Login from './Login';
 
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('authToken'));
   const [apps, setApps] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deploying, setDeploying] = useState(false);
@@ -171,9 +173,17 @@ function App() {
     setFormData({ ...formData, githubUrl: url, branch, name: autoName, domain: autoDomain });
   };
 
+  if (!isAuthenticated) {
+    return <Login onLogin={(token) => {
+      api.setAuthToken(token);
+      setIsAuthenticated(true);
+    }} />;
+  }
+
   return (
-    <div className="container animate-fade-in">
-      <div className="header">
+    <div className="container">
+      {/* Navigation */}
+      <nav className="nav-header">
         <div>
           <h1>Auto Deployment Platform</h1>
           <p>Your self-hosted Vercel alternative for lightning fast deployments</p>
@@ -183,12 +193,17 @@ function App() {
           <button className="btn btn-secondary" onClick={() => setShowCrashes(true)} style={{ position: 'relative', padding: '8px' }} title="Crash Reports">
             <Bell size={18} />
             {crashes.length > 0 && (
-              <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: 'var(--error-color)', color: 'white', borderRadius: '50%', width: '18px', height: '18px', fontSize: '0.7rem', display: 'flex', justifyContent: 'center', alignItems: 'center', fontWeight: 'bold' }}>
+              <span style={{ position: 'absolute', top: -5, right: -5, background: 'var(--danger)', color: 'white', fontSize: '0.7rem', padding: '2px 6px', borderRadius: '10px' }}>
                 {crashes.length}
               </span>
             )}
           </button>
-
+          <button className="btn btn-secondary" onClick={() => {
+            api.setAuthToken(null);
+            setIsAuthenticated(false);
+          }}>
+            <LogOut size={18} /> Logout
+          </button>
           <button className="btn btn-secondary" onClick={() => setShowSecretsVault(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px' }} title="Secrets Vault">
             <Key size={16} /> Secrets
           </button>
@@ -1077,6 +1092,129 @@ function GitHubConnect({ onConnected, onClose }) {
             <button className="btn btn-primary" onClick={() => setStep('idle')}>Retry</button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ServerHealthModal({ onClose }) {
+  const [health, setHealth] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetchHealth();
+    const interval = setInterval(fetchHealth, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const fetchHealth = async () => {
+    try {
+      const data = await api.getSystemHealth();
+      setHealth(data);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  if (error) return (
+    <div className="modal-backdrop" style={{ zIndex: 100 }}>
+      <div className="modal glass-panel" style={{ width: '600px' }}>
+        <div className="modal-header">
+          <h2>💻 Server Health</h2>
+          <button className="btn btn-secondary" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div style={{ color: 'var(--danger)', padding: '20px' }}>Error loading health data: {error}</div>
+      </div>
+    </div>
+  );
+
+  if (!health) return (
+    <div className="modal-backdrop" style={{ zIndex: 100 }}>
+      <div className="modal glass-panel" style={{ width: '600px' }}>
+        <div className="modal-header">
+          <h2>💻 Server Health</h2>
+          <button className="btn btn-secondary" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div style={{ padding: '40px', textAlign: 'center', opacity: 0.5 }}>Loading real-time metrics...</div>
+      </div>
+    </div>
+  );
+
+  const formatBytes = (bytes) => {
+    if (!bytes) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const renderProgressBar = (percent, color = 'var(--primary-color)') => (
+    <div style={{ background: 'rgba(255,255,255,0.1)', height: '12px', borderRadius: '6px', overflow: 'hidden', marginTop: '8px' }}>
+      <div style={{ width: `${Math.min(100, Math.max(0, percent))}%`, background: color, height: '100%', transition: 'width 0.5s ease' }} />
+    </div>
+  );
+
+  return (
+    <div className="modal-backdrop" style={{ zIndex: 100 }}>
+      <div className="modal glass-panel" style={{ width: '600px' }}>
+        <div className="modal-header">
+          <h2>💻 Server Health</h2>
+          <button className="btn btn-secondary" onClick={onClose}><X size={16} /></button>
+        </div>
+        
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginTop: '20px' }}>
+          
+          <div className="glass-panel" style={{ padding: '16px', background: 'rgba(255,255,255,0.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <Cpu size={18} style={{ color: '#00f2fe' }} />
+              <h3 style={{ margin: 0 }}>CPU Usage</h3>
+            </div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{health.cpu.toFixed(1)}%</div>
+            {renderProgressBar(health.cpu, '#00f2fe')}
+          </div>
+
+          <div className="glass-panel" style={{ padding: '16px', background: 'rgba(255,255,255,0.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <Activity size={18} style={{ color: '#4facfe' }} />
+              <h3 style={{ margin: 0 }}>Memory Usage</h3>
+            </div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{health.memory.usagePercent.toFixed(1)}%</div>
+            <div style={{ fontSize: '0.85rem', opacity: 0.7 }}>{formatBytes(health.memory.used)} / {formatBytes(health.memory.total)}</div>
+            {renderProgressBar(health.memory.usagePercent, '#4facfe')}
+          </div>
+
+          <div className="glass-panel" style={{ padding: '16px', background: 'rgba(255,255,255,0.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <HardDrive size={18} style={{ color: '#ffd700' }} />
+              <h3 style={{ margin: 0 }}>Disk Space</h3>
+            </div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{health.disk.usagePercent.toFixed(1)}%</div>
+            <div style={{ fontSize: '0.85rem', opacity: 0.7 }}>{formatBytes(health.disk.used)} / {formatBytes(health.disk.total)}</div>
+            {renderProgressBar(health.disk.usagePercent, '#ffd700')}
+          </div>
+
+          <div className="glass-panel" style={{ padding: '16px', background: 'rgba(255,255,255,0.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <Globe size={18} style={{ color: '#ff7b7b' }} />
+              <h3 style={{ margin: 0 }}>Network Traffic</h3>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px' }}>
+              <div>
+                <div style={{ fontSize: '0.85rem', opacity: 0.7 }}>Download</div>
+                <div style={{ fontWeight: 'bold' }}>{formatBytes(health.network.rx_sec)}/s</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '0.85rem', opacity: 0.7 }}>Upload</div>
+                <div style={{ fontWeight: 'bold' }}>{formatBytes(health.network.tx_sec)}/s</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div style={{ marginTop: '20px', textAlign: 'center', fontSize: '0.85rem', opacity: 0.6 }}>
+          Hostname: {health.hostname} • Uptime: {Math.floor(health.uptime / 3600)}h {Math.floor((health.uptime % 3600) / 60)}m
+        </div>
       </div>
     </div>
   );

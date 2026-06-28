@@ -91,7 +91,7 @@ Instead of pasting `.env` variables per app, create a "Secrets Manager" where yo
 ### 21. Automatic Server Backups
 Configure a cron job that zips up all your project code, databases, and config files and automatically uploads them to Google Drive or AWS S3 every night.
 
-### 22. Server Health Dashboard
+### 22. Server Health Dashboard (Completed ✅)
 Add a dedicated page that acts like `htop` in the browser -- showing your VPS total CPU, RAM usage, disk space remaining, and network bandwidth in real-time.
 
 ---
@@ -101,7 +101,7 @@ Add a dedicated page that acts like `htop` in the browser -- showing your VPS to
 ### 23. One-Click Starter Templates
 Instead of needing a GitHub repo, add a page with templates. Click "Deploy WordPress", "Deploy Next.js Blog", or "Deploy Ghost", and the platform spins it up from scratch instantly.
 
-### 24. Clone / Staging Environments
+### 24. Clone / Staging Environments (Completed ✅)
 Add a "Clone" button next to an app. It will duplicate the code, give it a new port and subdomain (like `staging-restaurant.subhan.tech`), so you can test updates without breaking production.
 
 ### 25. Custom `.deploy.sh` Scripts

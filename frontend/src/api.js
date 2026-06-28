@@ -1,15 +1,35 @@
 const API_URL = 'https://api.subhan.tech/api';
 const AUTH_URL = 'https://api.subhan.tech/api/auth';
 
+let authToken = localStorage.getItem('authToken');
+
+const fetchAuth = async (url, options = {}) => {
+  const headers = { ...options.headers };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401 || res.status === 403) {
+    localStorage.removeItem('authToken');
+    window.location.reload();
+  }
+  return res;
+};
+
 export const api = {
+  setAuthToken(token) {
+    authToken = token;
+    if (token) localStorage.setItem('authToken', token);
+    else localStorage.removeItem('authToken');
+  },
+
   async getApps() {
-    const res = await fetch(`${API_URL}/apps`);
+    const res = await fetchAuth(`${API_URL}/apps`);
     if (!res.ok) throw new Error('Failed to fetch apps');
     return res.json();
   },
 
   async detectEnv(data) {
-    const response = await fetch(`${API_URL}/env/detect`, {
+    const response = await fetchAuth(`${API_URL}/env/detect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
@@ -22,7 +42,7 @@ export const api = {
   },
 
   async getHistory(domain) {
-    const response = await fetch(`${API_URL}/history/${domain}`);
+    const response = await fetchAuth(`${API_URL}/history/${domain}`);
     if (!response.ok) {
         const error = await response.json();
         throw new Error(error.error || 'Failed to get history');
@@ -31,7 +51,7 @@ export const api = {
   },
 
   async rollback(domain, commit) {
-    const response = await fetch(`${API_URL}/rollback/${domain}/${commit}`, {
+    const response = await fetchAuth(`${API_URL}/rollback/${domain}/${commit}`, {
         method: 'POST'
     });
     if (!response.ok) {
@@ -42,7 +62,7 @@ export const api = {
   },
 
   async deployApp(data, onLog) {
-    const res = await fetch(`${API_URL}/deploy`, {
+    const res = await fetchAuth(`${API_URL}/deploy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
@@ -85,7 +105,7 @@ export const api = {
   },
 
   async actionApp(name, action) {
-    const res = await fetch(`${API_URL}/${action}/${name}`, {
+    const res = await fetchAuth(`${API_URL}/${action}/${name}`, {
       method: action === 'delete' ? 'DELETE' : 'POST'
     });
     if (!res.ok) throw new Error(await res.text());
@@ -93,19 +113,19 @@ export const api = {
   },
 
   async getLogs(name) {
-    const res = await fetch(`${API_URL}/logs/${name}`);
+    const res = await fetchAuth(`${API_URL}/logs/${name}`);
     if (!res.ok) throw new Error('Failed to fetch logs');
     return res.json();
   },
 
   async getSecrets() {
-    const res = await fetch(`${API_URL}/secrets`);
+    const res = await fetchAuth(`${API_URL}/secrets`);
     if (!res.ok) throw new Error('Failed to fetch secrets');
     return res.json();
   },
 
   async saveSecret(key, value) {
-    const res = await fetch(`${API_URL}/secrets`, {
+    const res = await fetchAuth(`${API_URL}/secrets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key, value })
@@ -115,25 +135,25 @@ export const api = {
   },
 
   async deleteSecret(key) {
-    const res = await fetch(`${API_URL}/secrets/${key}`, { method: 'DELETE' });
+    const res = await fetchAuth(`${API_URL}/secrets/${key}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed to delete secret');
     return res.json();
   },
 
   async getFiles(name, dir = '') {
-    const res = await fetch(`${API_URL}/files/${name}?dir=${encodeURIComponent(dir)}`);
+    const res = await fetchAuth(`${API_URL}/files/${name}?dir=${encodeURIComponent(dir)}`);
     if (!res.ok) throw new Error('Failed to fetch files');
     return res.json();
   },
 
   async getFileContent(name, file = '') {
-    const res = await fetch(`${API_URL}/file/${name}/read?file=${encodeURIComponent(file)}`);
+    const res = await fetchAuth(`${API_URL}/file/${name}/read?file=${encodeURIComponent(file)}`);
     if (!res.ok) throw new Error('Failed to fetch file content');
     return res.json();
   },
 
   async saveFileContent(name, file, content) {
-    const res = await fetch(`${API_URL}/file/${name}/write?file=${encodeURIComponent(file)}`, {
+    const res = await fetchAuth(`${API_URL}/file/${name}/write?file=${encodeURIComponent(file)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content })
@@ -143,19 +163,35 @@ export const api = {
   },
 
   async getCrashes() {
-    const res = await fetch(`${API_URL}/crashes`);
+    const res = await fetchAuth(`${API_URL}/crashes`);
     if (!res.ok) throw new Error('Failed to fetch crashes');
     return res.json();
   },
 
+  async getSystemHealth() {
+    const res = await fetchAuth(`${API_URL}/health`);
+    if (!res.ok) throw new Error('Failed to fetch system health');
+    return res.json();
+  },
+
+  async cloneApp(name, cloneName) {
+    const res = await fetchAuth(`${API_URL}/clone/${name}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cloneName })
+    });
+    if (!res.ok) throw new Error('Failed to clone app');
+    return res.json();
+  },
+
   async requestDeviceCode() {
-    const res = await fetch(`${AUTH_URL}/device`, { method: 'POST' });
+    const res = await fetchAuth(`${AUTH_URL}/device`, { method: 'POST' });
     if (!res.ok) throw new Error('Failed to start GitHub login');
     return res.json();
   },
 
   async pollForToken(deviceCode) {
-    const res = await fetch(`${AUTH_URL}/poll`, {
+    const res = await fetchAuth(`${AUTH_URL}/poll`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ device_code: deviceCode })

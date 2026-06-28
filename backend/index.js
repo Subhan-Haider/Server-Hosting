@@ -1,3 +1,4 @@
+require('dotenv').config({ path: '.env.local' });
 const express = require('express');
 const cors = require('cors');
 const portManager = require('./portManager');
@@ -9,6 +10,9 @@ const authService = require('./authService');
 const historyManager = require('./historyManager');
 const secretsManager = require('./secretsManager');
 const webhookService = require('./webhookService');
+const healthService = require('./healthService');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 app.use(cors({
@@ -18,7 +22,10 @@ app.use(cors({
 }));
 app.use(express.json());
 
+const authMiddleware = require('./authMiddleware');
+
 // Endpoints
+app.use('/api', authMiddleware);
 
 app.get('/', (req, res) => {
   res.json({
@@ -29,6 +36,12 @@ app.get('/', (req, res) => {
 
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', port: process.env.PORT || 4000 });
+});
+
+app.get('/api/health', async (req, res) => {
+    const health = await healthService.getSystemHealth();
+    if (health) res.json(health);
+    else res.status(500).json({ error: 'Failed to fetch system health' });
 });
 
 app.get('/api/apps', async (req, res) => {
@@ -300,6 +313,55 @@ app.post('/api/redeploy/:name', async (req, res) => {
                 webhookService.sendWebhook(deploymentData);
             }
         }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/clone/:name', async (req, res) => {
+    try {
+        const { name } = req.params;
+        const { cloneName } = req.body;
+        
+        if (!cloneName) return res.status(400).json({ error: 'Clone name is required' });
+        
+        const project = portManager.getProjectDetails(name);
+        if (!project) return res.status(404).json({ error: 'Original project not found' });
+        if (project.deployType !== 'github') return res.status(400).json({ error: 'Only GitHub deployments can be cloned' });
+        
+        const cloneDomain = `${cloneName}.subhan.tech`;
+        
+        // 1. Redeploy repo to NEW folder
+        const { commitHash, newPath } = await gitService.redeployRepo(
+            project.githubUrl, 
+            project.githubPat, 
+            cloneName, 
+            project.branch || 'main', 
+            project.installCmd, 
+            project.buildCmd
+        );
+        
+        // 2. Assign NEW port and start new PM2 process
+        const newPm2Name = cloneName;
+        const newPort = await portManager.assignFreePort(cloneName, cloneDomain, newPath, { ...project, pm2Name: newPm2Name, domain: cloneDomain, path: newPath, name: cloneName });
+        
+        // Inherit global secrets and local env vars
+        const envKeys = envService.scanForEnvKeys(newPath);
+        if (envKeys.length > 0 || fs.existsSync(path.join(project.path, '.env.local'))) {
+            try {
+                if (fs.existsSync(path.join(project.path, '.env.local'))) {
+                    fs.copyFileSync(path.join(project.path, '.env.local'), path.join(newPath, '.env.local'));
+                }
+            } catch (e) {}
+        }
+        
+        await pm2Service.startProject(newPm2Name, newPath, newPort, project.startCmd);
+        
+        // 3. Update Cloudflare to new port
+        await cloudflareService.updateCloudflareConfig(cloneDomain, newPort);
+        
+        res.json({ message: 'Cloned successfully', cloneName, cloneDomain });
+    } catch (err) {
+        console.error('Clone error:', err);
         res.status(500).json({ error: err.message });
     }
 });
