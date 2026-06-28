@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings } from 'lucide-react';
+import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings, ExternalLink } from 'lucide-react';
 import { api } from './api';
 
 function App() {
@@ -341,7 +341,12 @@ function AppCard({ app, onAction, delay }) {
         </div>
       </div>
 
-      <div className="app-actions">
+      <div className="app-actions" style={{ flexWrap: 'wrap' }}>
+        {app.status === 'online' && (
+          <a href={`https://${app.domain}`} target="_blank" rel="noopener noreferrer" className="btn btn-primary" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px' }}>
+            <ExternalLink size={16} /> Open
+          </a>
+        )}
         {app.status !== 'online' ? (
           <button className="btn btn-primary" onClick={() => handleAction('start')} disabled={loadingAction}>
             <Play size={16} /> Start
