@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings, ExternalLink, Code2, LogOut, CheckCircle, Bell, Key, FileText, Save, X, Search, Copy, Check, ChevronDown } from 'lucide-react';
+import { Play, Square, RotateCw, Trash2, Terminal, Plus, Server, Globe, Folder, Activity, RefreshCw, GitBranch, Settings, ExternalLink, Code2, LogOut, CheckCircle, Bell, Key, FileText, Save, X, Search, Copy, Check, ChevronDown, Database, HardDrive } from 'lucide-react';
 import { api } from './api';
 import Login from './Login';
 
@@ -30,6 +30,13 @@ function App() {
 
   const [templates, setTemplates] = useState([]);
 
+  // Phase 3 State
+  const [databases, setDatabases] = useState([]);
+  const [showDatabases, setShowDatabases] = useState(false);
+  
+  const [servers, setServers] = useState([]);
+  const [showServers, setShowServers] = useState(false);
+
   const [formData, setFormData] = useState({ 
     name: '', 
     path: '', 
@@ -39,7 +46,8 @@ function App() {
     branch: 'main',
     installCmd: '',
     buildCmd: '',
-    startCmd: ''
+    startCmd: '',
+    serverId: 'local'
   });
 
   const fetchApps = async () => {
@@ -51,6 +59,20 @@ function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchDatabases = async () => {
+    try {
+      const data = await api.getDatabases();
+      setDatabases(data.databases || []);
+    } catch (err) { console.error(err); }
+  };
+
+  const fetchServers = async () => {
+    try {
+      const data = await api.getServers();
+      setServers(data.servers || []);
+    } catch (err) { console.error(err); }
   };
 
   const fetchSecrets = async () => {
@@ -253,6 +275,12 @@ function App() {
 
         {/* Right actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+          <button className="btn btn-secondary" onClick={() => { fetchDatabases(); setShowDatabases(true); }} title="Databases" style={{ padding: '6px 10px', fontSize: '0.82rem', gap: '5px' }}>
+            <Database size={14} /> Databases
+          </button>
+          <button className="btn btn-secondary" onClick={() => { fetchServers(); setShowServers(true); }} title="Servers" style={{ padding: '6px 10px', fontSize: '0.82rem', gap: '5px' }}>
+            <HardDrive size={14} /> Servers
+          </button>
           <button className="btn btn-secondary" onClick={() => setShowSecretsVault(true)} title="Secrets Vault" style={{ padding: '6px 10px', fontSize: '0.82rem', gap: '5px' }}>
             <Key size={14} /> Secrets
           </button>
@@ -510,6 +538,18 @@ function App() {
                 </div>
               )}
 
+              <div className="form-group">
+                <label>Target Server</label>
+                <div style={{ position: 'relative' }}>
+                  <HardDrive size={18} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--text-secondary)' }} />
+                  <select value={formData.serverId} onChange={e => setFormData({...formData, serverId: e.target.value})} style={{ paddingLeft: '40px', width: '100%', appearance: 'none' }} required>
+                    <option value="local">Localhost (This Server)</option>
+                    {servers.map(s => <option key={s.id} value={s.id}>{s.name} ({s.host})</option>)}
+                  </select>
+                  <ChevronDown size={14} style={{ position: 'absolute', right: '12px', top: '14px', color: 'var(--text-secondary)', pointerEvents: 'none' }} />
+                </div>
+              </div>
+
               <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '8px' }} disabled={deploying}>
                 {deploying ? '⏳ Deploying...' : 'Deploy App'}
               </button>
@@ -574,6 +614,86 @@ function App() {
               <input name="key" type="text" placeholder="KEY_NAME" required style={{ flex:1, fontFamily:'monospace' }} />
               <input name="val" type="password" placeholder="Value" required style={{ flex:2, fontFamily:'monospace' }} />
               <button type="submit" className="btn btn-primary" style={{ padding:'8px 16px' }}>Add</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Databases Modal */}
+      {showDatabases && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'center', backdropFilter: 'blur(5px)' }}>
+          <div className="glass-panel" style={{ width: '90%', maxWidth: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2><Database size={20} style={{display:'inline',verticalAlign:'text-bottom'}}/> Databases</h2>
+              <button onClick={() => setShowDatabases(false)} style={{ background:'none',border:'none',color:'var(--text-secondary)',cursor:'pointer',fontSize:'1.2rem' }}>✕</button>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>One-click standalone Docker databases. Credentials will be auto-saved to Global Secrets.</p>
+            <div style={{ flex: 1, overflowY: 'auto', marginBottom: '16px' }}>
+              {databases.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>No databases running.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {databases.map((db) => (
+                    <div key={db.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', background:'rgba(255,255,255,0.05)', padding:'10px 12px', borderRadius:'8px' }}>
+                      <div>
+                        <div style={{ fontWeight: 'bold' }}>{db.name} <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 'normal', background: 'rgba(0,0,0,0.3)', padding: '2px 6px', borderRadius: '4px' }}>{db.type}</span></div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Port: {db.port} | Status: <span style={{ color: db.status === 'running' ? 'var(--success)' : 'var(--danger)' }}>{db.status}</span></div>
+                      </div>
+                      <button onClick={async () => { if(confirm(`Delete database ${db.name}? Data will be lost.`)) { await api.deleteDatabase(db.id); fetchDatabases(); } }} className="btn btn-danger" style={{ padding: '6px 10px' }}><Trash2 size={14}/></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <form onSubmit={async (e) => { e.preventDefault(); const name=e.target.elements.name.value.trim(); const type=e.target.elements.type.value; if(name&&type){await api.createDatabase(type,name);e.target.reset();fetchDatabases();}}} style={{ display:'flex', gap:'8px' }}>
+              <select name="type" style={{ flex: 1, background: 'var(--bg-secondary)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', padding: '8px', borderRadius: '4px' }}>
+                <option value="postgres">PostgreSQL</option>
+                <option value="mysql">MySQL</option>
+                <option value="redis">Redis</option>
+              </select>
+              <input name="name" type="text" placeholder="DB Name (e.g., myapp_db)" required style={{ flex:2 }} />
+              <button type="submit" className="btn btn-primary" style={{ padding:'8px 16px' }}>Create</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Servers Modal */}
+      {showServers && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'center', backdropFilter: 'blur(5px)' }}>
+          <div className="glass-panel" style={{ width: '90%', maxWidth: '600px', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h2><HardDrive size={20} style={{display:'inline',verticalAlign:'text-bottom'}}/> Remote Servers</h2>
+              <button onClick={() => setShowServers(false)} style={{ background:'none',border:'none',color:'var(--text-secondary)',cursor:'pointer',fontSize:'1.2rem' }}>✕</button>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>Manage remote SSH servers to deploy applications across your fleet.</p>
+            <div style={{ flex: 1, overflowY: 'auto', marginBottom: '16px' }}>
+              {servers.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>No remote servers added.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {servers.map((srv) => (
+                    <div key={srv.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', background:'rgba(255,255,255,0.05)', padding:'10px 12px', borderRadius:'8px' }}>
+                      <div>
+                        <div style={{ fontWeight: 'bold' }}>{srv.name}</div>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{srv.host} | Status: <span style={{ color: srv.status === 'online' ? 'var(--success)' : 'var(--danger)' }}>{srv.status}</span></div>
+                      </div>
+                      <button onClick={async () => { if(confirm(`Remove server ${srv.name}?`)) { await api.deleteServer(srv.id); fetchServers(); } }} className="btn btn-danger" style={{ padding: '6px 10px' }}><Trash2 size={14}/></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <form onSubmit={async (e) => { e.preventDefault(); const el=e.target.elements; try{ await api.addServer({name:el.name.value, host:el.host.value, username:el.user.value, privateKey:el.key.value}); e.target.reset(); fetchServers(); }catch(err){alert(err.message)} }} style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input name="name" type="text" placeholder="Alias (e.g., prod-server-1)" required style={{ flex:1 }} />
+                <input name="host" type="text" placeholder="IP Address / Hostname" required style={{ flex:1 }} />
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input name="user" type="text" placeholder="Username (e.g., root)" required style={{ width: '150px' }} />
+                <textarea name="key" placeholder="SSH Private Key (-----BEGIN PRIVATE KEY-----...)" required style={{ flex:1, height: '60px', fontFamily: 'monospace', fontSize: '0.8rem' }} />
+              </div>
+              <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-end', padding:'8px 16px' }}>Add Server</button>
             </form>
           </div>
         </div>

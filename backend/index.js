@@ -17,6 +17,8 @@ const templates = require('./templates');
 const cronService = require('./cronService');
 const appHealthService = require('./appHealthService');
 const s3BackupService = require('./s3BackupService');
+const dockerService = require('./dockerService');
+const sshService = require('./sshService');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -126,7 +128,7 @@ app.post('/api/env/detect', async (req, res) => {
 });
 
 app.post('/api/deploy', async (req, res) => {
-    const { deployType, name, domain, path, githubUrl, githubPat, branch = 'main', installCmd, buildCmd, startCmd, envVars, globalSecretKeys } = req.body;
+    const { deployType, name, domain, path, githubUrl, githubPat, branch = 'main', installCmd, buildCmd, startCmd, envVars, globalSecretKeys, serverId } = req.body;
     const deployStartTime = Date.now();
     
     // Set up SSE
@@ -140,6 +142,11 @@ app.post('/api/deploy', async (req, res) => {
 
     if (!domain) {
         res.write(`data: ${JSON.stringify({ type: 'error', error: 'Domain is required' })}\n\n`);
+        return res.end();
+    }
+
+    if (serverId && serverId !== 'local') {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: 'Remote SSH Deployments are currently in Beta and not yet fully supported. Please use Localhost.' })}\n\n`);
         return res.end();
     }
     
@@ -889,6 +896,66 @@ app.post('/api/backup/:name', async (req, res) => {
         
         const result = await s3BackupService.createBackup(req.params.name, project.path);
         res.json({ message: 'Backup uploaded successfully', key: result.key });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Docker Databases ──────────────────────────────────────────────────────
+app.get('/api/databases', async (req, res) => {
+    try {
+        const dbs = await dockerService.getDatabaseStatus();
+        res.json({ databases: dbs });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/databases', async (req, res) => {
+    try {
+        const { type, name } = req.body;
+        if (!type || !name) return res.status(400).json({ error: 'Type and Name are required' });
+        const db = await dockerService.createDatabase(type, name);
+        res.json({ message: 'Database created successfully', database: db });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/databases/:id', async (req, res) => {
+    try {
+        await dockerService.deleteDatabase(req.params.id);
+        res.json({ message: 'Database deleted successfully' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Multi-Server SSH ──────────────────────────────────────────────────────
+app.get('/api/servers', async (req, res) => {
+    try {
+        const servers = await sshService.getServerStatus();
+        res.json({ servers });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/servers', async (req, res) => {
+    try {
+        const { name, host, username, privateKey } = req.body;
+        if (!name || !host || !username || !privateKey) return res.status(400).json({ error: 'All fields are required' });
+        const server = await sshService.addServer(name, host, username, privateKey);
+        res.json({ message: 'Server added successfully', server });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/servers/:id', (req, res) => {
+    try {
+        sshService.deleteServer(req.params.id);
+        res.json({ message: 'Server deleted successfully' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

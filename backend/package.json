@@ -24,6 +24,7 @@
     "kill-port": "^2.0.1",
     "node-cron": "^4.5.0",
     "node-fetch": "^3.3.2",
+    "node-ssh": "^13.2.1",
     "pm2": "^7.0.1",
     "systeminformation": "^5.31.11",
     "yaml": "^2.9.0"

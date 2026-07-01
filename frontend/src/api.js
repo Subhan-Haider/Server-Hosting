@@ -293,6 +293,42 @@ export const api = {
     return res.json();
   },
 
+  async getDatabases() {
+    const res = await fetchAuth(`${API_URL}/databases`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async createDatabase(type, name) {
+    const res = await fetchAuth(`${API_URL}/databases`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, name }) });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async deleteDatabase(id) {
+    const res = await fetchAuth(`${API_URL}/databases/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async getServers() {
+    const res = await fetchAuth(`${API_URL}/servers`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async addServer(data) {
+    const res = await fetchAuth(`${API_URL}/servers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
+  async deleteServer(id) {
+    const res = await fetchAuth(`${API_URL}/servers/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  },
+
   async testDiscordNotification() {
     const res = await fetchAuth(`${API_URL}/notify/test`, { method: 'POST' });
     if (!res.ok) throw new Error(await res.text());
